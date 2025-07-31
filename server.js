@@ -60,6 +60,14 @@ process.on('message', async (msg) => {
         } catch (error) {
             console.error('Atomic write failed:', error);
         }
+    } else if (msg.type === 'DELETE_FILE') {
+        // 接收主进程的删除文件指令
+        fs.unlink(msg.filePath, (err) => {
+            // 如果文件不存在 (ENOENT)，则忽略错误，否则打印错误
+            if (err && err.code !== 'ENOENT') {
+                console.error('Failed to delete file:', err);
+            }
+        });
     }
 });
 

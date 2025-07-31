@@ -1,185 +1,268 @@
-/**
- * script.js
- * 这是前端的 JavaScript 逻辑文件。
- * 它的职责是：
- * 1. 处理用户界面上的所有交互（点击按钮、输入文本等）。
- * 2. 通过 preload.js 暴露的 'electronAPI' 与主进程通信，来加载、保存和管理数据。
- * 3. 动态地在页面上创建和移除数据字段输入框。
- */
 document.addEventListener('DOMContentLoaded', () => {
-    // 获取页面上的所有交互元素
+    // --- DOM 元素获取 ---
     const profileSelect = document.getElementById('profile-select');
     const newProfileBtn = document.getElementById('new-profile-btn');
     const deleteProfileBtn = document.getElementById('delete-profile-btn');
     const vmixUrlInput = document.getElementById('vmix-url');
+    const currentProfileTitle = document.getElementById('current-profile-title');
     const dataFieldsContainer = document.getElementById('data-fields-container');
     const addFieldBtn = document.getElementById('add-field-btn');
-    const currentProfileTitle = document.getElementById('current-profile-title');
 
-    let currentProfile = '';
-    let serverPort = 8088; // 默认端口，会被主进程更新
+    // --- 应用状态 ---
+    let currentProfileName = null;
+    let serverPort = null;
+    let saveTimeout = null; // 用于保存操作的防抖
 
-    // --- 核心功能函数 ---
+    // --- 函数定义 ---
 
-    // 从后端加载所有配置文件并填充下拉列表
-    async function loadProfiles() {
-        const profiles = await window.electronAPI.getProfiles();
-        profileSelect.innerHTML = '';
-        
-        let profileToSelect = profiles[0];
-        if (profiles.length === 0) {
-            // 如果没有任何配置文件，创建一个默认的
-            profileToSelect = 'default';
-            profiles.push(profileToSelect);
+    /**
+     * 防抖函数，防止用户频繁输入导致过度保存
+     * @param {Function} func - 要执行的函数
+     * @param {number} delay - 延迟时间 (毫秒)
+     */
+    const debounce = (func, delay) => {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(func, delay);
+    };
+
+    /**
+     * 更新 vMix 数据源 URL
+     */
+    const updateVmixUrl = () => {
+        if (serverPort && currentProfileName) {
+            const url = `http://127.0.0.1:${serverPort}/api/data/${currentProfileName}`;
+            vmixUrlInput.value = url;
+            vmixUrlInput.title = url;
+        } else {
+            vmixUrlInput.value = '请先选择或创建一个配置文件';
+            vmixUrlInput.title = '';
         }
+    };
 
+    /**
+     * 从主进程加载所有配置文件列表并更新下拉菜单
+     */
+    const loadProfiles = async () => {
+        const profiles = await window.api.getProfiles();
+        const previouslySelected = currentProfileName || profileSelect.value;
+        profileSelect.innerHTML = '<option value="">-- 选择一个配置 --</option>';
         profiles.forEach(profile => {
             const option = document.createElement('option');
             option.value = profile;
             option.textContent = profile;
             profileSelect.appendChild(option);
         });
-        
-        // 选中第一个或默认的配置文件
-        await selectProfile(profileToSelect);
-    }
 
-    // 当用户选择一个配置文件时，加载其数据
-    async function selectProfile(profileName) {
-        if (!profileName) {
-            dataFieldsContainer.innerHTML = '';
-            vmixUrlInput.value = '';
+        // 尝试恢复之前的选择
+        if (profiles.includes(previouslySelected)) {
+            profileSelect.value = previouslySelected;
+        }
+        
+        // 触发一次 change 事件来加载数据
+        handleProfileChange();
+    };
+
+    /**
+     * 根据当前选择的配置文件加载其数据
+     */
+    const handleProfileChange = async () => {
+        currentProfileName = profileSelect.value;
+        deleteProfileBtn.disabled = !currentProfileName;
+        addFieldBtn.disabled = !currentProfileName;
+
+        if (!currentProfileName) {
             currentProfileTitle.textContent = '数据字段';
-            currentProfile = '';
+            dataFieldsContainer.innerHTML = '<p class="placeholder">请从上方选择一个配置文件进行编辑，或点击“新建”来创建一个新的配置。</p>';
+        } else {
+            currentProfileTitle.textContent = `编辑: ${currentProfileName}`;
+            const data = await window.api.getProfileData(currentProfileName);
+            renderDataFields(data);
+        }
+        updateVmixUrl();
+    };
+
+    /**
+     * 将数据对象渲染成键值对输入框
+     * @param {object} data - 要渲染的数据对象
+     */
+    const renderDataFields = (data) => {
+        dataFieldsContainer.innerHTML = '';
+        if (Object.keys(data).length === 0 && currentProfileName) {
+            dataFieldsContainer.innerHTML = '<p class="placeholder">此配置为空，点击“添加字段”开始添加数据。</p>';
+        }
+
+        for (const key in data) {
+            createFieldInput(key, data[key]);
+        }
+    };
+
+    /**
+     * 创建一个键值对输入行
+     * @param {string} key - 键
+     * @param {string} value - 值
+     */
+    const createFieldInput = (key = '', value = '') => {
+        const fieldDiv = document.createElement('div');
+        fieldDiv.className = 'field';
+
+        const keyInput = document.createElement('input');
+        keyInput.type = 'text';
+        keyInput.className = 'key-input';
+        keyInput.placeholder = '字段名 (Key)';
+        keyInput.value = key;
+
+        const valueInput = document.createElement('input');
+        valueInput.type = 'text';
+        valueInput.className = 'value-input';
+        valueInput.placeholder = '字段值 (Value)';
+        valueInput.value = value;
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = '删除';
+        deleteBtn.className = 'delete-field-btn';
+
+        // 任何输入变化都触发防抖保存
+        [keyInput, valueInput].forEach(input => {
+            input.addEventListener('input', () => debounce(saveCurrentData, 500));
+        });
+
+        deleteBtn.addEventListener('click', () => {
+            fieldDiv.remove();
+            saveCurrentData(); // 删除后立即保存
+        });
+
+        fieldDiv.appendChild(keyInput);
+        fieldDiv.appendChild(valueInput);
+        fieldDiv.appendChild(deleteBtn);
+        
+        dataFieldsContainer.appendChild(fieldDiv);
+    };
+
+    /**
+     * 保存当前配置文件的数据
+     */
+    const saveCurrentData = async () => {
+        if (!currentProfileName) return;
+
+        // 收集所有字段的数据
+        const fields = dataFieldsContainer.querySelectorAll('.field');
+        const data = {};
+        fields.forEach(field => {
+            const keyInput = field.querySelector('.key-input');
+            const valueInput = field.querySelector('.value-input');
+            const key = keyInput.value.trim();
+            const value = valueInput.value;
+            
+            // 只保存键不为空的字段
+            if (key) {
+                data[key] = value;
+            }
+        });
+
+        try {
+            // 调用主进程保存数据
+            const result = await window.api.saveProfileData(currentProfileName, data);
+            if (!result.success) {
+                console.error('保存失败:', result.error);
+                // 可以在这里添加用户友好的错误提示
+            }
+        } catch (error) {
+            console.error('保存数据时出错:', error);
+            // 可以在这里添加用户友好的错误提示
+        }
+    };
+
+    /**
+     * 创建新的配置文件
+     */
+    const createNewProfile = async () => {
+        const profileName = prompt('请输入新配置文件的名称:');
+        if (!profileName) return;
+
+        // 简单的名称验证
+        if (!/^[a-zA-Z0-9_-]+$/.test(profileName)) {
+            alert('配置文件名只能包含字母、数字、下划线和连字符。');
             return;
         }
 
-        currentProfile = profileName;
-        profileSelect.value = currentProfile;
-        vmixUrlInput.value = `http://127.0.0.1:${serverPort}/api/data/${currentProfile}`;
-        currentProfileTitle.textContent = `数据字段 (${currentProfile})`;
-
-        // 从后端获取数据并渲染到界面
-        const data = await window.electronAPI.getProfileData(currentProfile);
-        renderDataFields(data || {});
-    }
-
-    // 根据数据对象，动态创建键值对输入框
-    function renderDataFields(data) {
-        dataFieldsContainer.innerHTML = '';
-        Object.entries(data).forEach(([key, value]) => {
-            createFieldRow(key, value);
-        });
-    }
-
-    // 创建一行键值对输入框和移除按钮
-    function createFieldRow(key = '', value = '') {
-        const row = document.createElement('div');
-        row.className = 'data-field-row';
-        row.innerHTML = `
-            <input type="text" class="key-input" placeholder="Key (键)" value="${key}">
-            <input type="text" class="value-input" placeholder="Value (值)" value="${value}">
-            <button class="remove-field-btn">移除</button>
-        `;
-        dataFieldsContainer.appendChild(row);
-    }
-
-    // 收集当前界面上所有键值对，并发送到后端保存
-    async function collectAndSaveData() {
-        if (!currentProfile) return;
-
-        const data = {};
-        const rows = dataFieldsContainer.querySelectorAll('.data-field-row');
-        rows.forEach(row => {
-            const keyInput = row.querySelector('.key-input');
-            const valueInput = row.querySelector('.value-input');
-            const key = keyInput.value.trim();
-            if (key) { // 只有当 "key" 不为空时才保存
-                data[key] = valueInput.value;
-            }
-        });
-
-        // 通过 electronAPI 发送数据到主进程
-        await window.electronAPI.saveProfileData({ profileName: currentProfile, data });
-    }
-
-    // --- 事件监听器 ---
-
-    // "新建" 按钮
-    newProfileBtn.addEventListener('click', () => {
-        const profileName = prompt('请输入新的配置文件名称 (只能使用字母, 数字, -, _):');
-        if (profileName && /^[a-zA-Z0-9_-]+$/.test(profileName)) {
-            // 检查是否已存在
-            if ([...profileSelect.options].some(opt => opt.value === profileName)) {
-                alert('该名称已存在！');
+        try {
+            // 尝试加载这个配置文件，如果不存在会返回空对象
+            const data = await window.api.getProfileData(profileName);
+            if (Object.keys(data).length > 0) {
+                alert('该配置文件已存在，请选择其他名称。');
                 return;
             }
+
+            // 创建新的配置文件选项
             const option = document.createElement('option');
             option.value = profileName;
             option.textContent = profileName;
             profileSelect.appendChild(option);
-            selectProfile(profileName);
-            collectAndSaveData(); // 保存一个空的配置
-        } else if (profileName) {
-            alert('名称无效。请只使用字母, 数字, 下划线, 和连字符。');
+            profileSelect.value = profileName;
+            
+            // 触发change事件来加载新配置文件
+            handleProfileChange();
+        } catch (error) {
+            console.error('创建新配置文件时出错:', error);
+            alert('创建新配置文件时出错，请查看控制台了解详情。');
         }
-    });
+    };
 
-    // "删除" 按钮
-    deleteProfileBtn.addEventListener('click', async () => {
-        const selectedProfile = profileSelect.value;
-        if (selectedProfile && confirm(`您确定要删除配置文件 "${selectedProfile}" 吗？此操作无法撤销。`)) {
-            const result = await window.electronAPI.deleteProfile(selectedProfile);
+    /**
+     * 删除当前配置文件
+     */
+    const deleteCurrentProfile = async () => {
+        if (!currentProfileName) return;
+        
+        if (!confirm(`确定要删除配置文件 "${currentProfileName}" 吗？此操作不可撤销。`)) {
+            return;
+        }
+
+        try {
+            const result = await window.api.deleteProfile(currentProfileName);
             if (result.success) {
-                await loadProfiles(); // 重新加载配置文件列表
+                // 从下拉菜单中移除选项
+                const optionToRemove = profileSelect.querySelector(`option[value="${currentProfileName}"]`);
+                if (optionToRemove) optionToRemove.remove();
+                
+                // 重置当前配置文件
+                currentProfileName = null;
+                profileSelect.value = '';
+                handleProfileChange();
             } else {
-                alert(`删除失败: ${result.error}`);
+                console.error('删除失败:', result.error);
+                alert('删除配置文件失败，请查看控制台了解详情。');
             }
+        } catch (error) {
+            console.error('删除配置文件时出错:', error);
+            alert('删除配置文件时出错，请查看控制台了解详情。');
         }
-    });
+    };
 
-    // 下拉列表切换事件
-    profileSelect.addEventListener('change', () => {
-        selectProfile(profileSelect.value);
-    });
+    // --- 事件监听器 ---
 
-    // "添加字段" 按钮
-    addFieldBtn.addEventListener('click', () => {
-        createFieldRow();
-    });
-
-    // 使用事件委托处理 "移除" 按钮的点击和输入框的实时输入
-    dataFieldsContainer.addEventListener('click', (e) => {
-        if (e.target.classList.contains('remove-field-btn')) {
-            e.target.closest('.data-field-row').remove();
-            collectAndSaveData(); // 移除后立即保存
-        }
-    });
-
-    dataFieldsContainer.addEventListener('input', () => {
-        // 使用 debounce 防止过于频繁的保存操作
-        // (简单实现，不引入额外库)
-        clearTimeout(window.saveTimeout);
-        window.saveTimeout = setTimeout(collectAndSaveData, 300);
-    });
-
-    // URL 输入框点击时自动复制
-    vmixUrlInput.addEventListener('click', () => {
-        vmixUrlInput.select();
-        document.execCommand('copy');
-        // 可以添加一个简单的提示，比如改变边框颜色
-        vmixUrlInput.style.boxShadow = '0 0 0 2px var(--success-color)';
-        setTimeout(() => {
-            vmixUrlInput.style.boxShadow = '';
-        }, 1000);
-    });
-    
-    // --- 初始化 ---
-    // 监听主进程发来的服务器端口号
-    window.electronAPI.onServerStarted((port) => {
-        console.log(`Server started on port: ${port}`);
+    // 监听服务器启动事件
+    window.api.onServerStarted((port) => {
         serverPort = port;
-        // 服务器启动后，加载配置文件并更新URL
-        loadProfiles();
+        updateVmixUrl();
     });
+
+    // 配置文件选择变化
+    profileSelect.addEventListener('change', handleProfileChange);
+
+    // 新建配置文件按钮
+    newProfileBtn.addEventListener('click', createNewProfile);
+
+    // 删除配置文件按钮
+    deleteProfileBtn.addEventListener('click', deleteCurrentProfile);
+
+    // 添加字段按钮
+    addFieldBtn.addEventListener('click', () => {
+        if (currentProfileName) {
+            createFieldInput();
+        }
+    });
+
+    // --- 初始化 ---
+    loadProfiles();
 });

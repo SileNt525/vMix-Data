@@ -115,14 +115,15 @@ app.whenReady().then(() => {
 
     // 删除配置文件
     ipcMain.handle('delete-profile', async (event, profileName) => {
-        const filePath = path.join(dataDir, `${profileName}.json`);
-        try {
-            await fs.promises.unlink(filePath);
-            return { success: true };
-        } catch (error) {
-            console.error('Failed to delete profile:', error);
-            return { success: false, error: error.message };
+        // 校验配置文件名
+        if (!profileName) {
+            return { success: false, error: 'Invalid profile name' };
         }
+        const filePath = path.join(dataDir, `${profileName}.json`);
+        // 将删除任务发送给服务器子进程处理，以保持文件操作的统一性
+        serverProcess.send({ type: 'DELETE_FILE', filePath });
+        // 这是一个乐观的返回，UI将刷新列表，删除的配置将消失
+        return { success: true };
     });
 
     // 创建应用窗口
