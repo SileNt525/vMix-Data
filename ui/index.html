@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Content-Security-Policy: 限制资源加载，提升安全性 -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self';">
+    <title>vMix Data Manager</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>vMix Data Manager</h1>
+        </header>
+
+        <!-- 配置文件管理区域 -->
+        <section class="profile-manager">
+            <h2>配置文件管理</h2>
+            <div class="profile-controls">
+                <select id="profile-select" title="选择一个已有的配置或新建一个"></select>
+                <button id="new-profile-btn" title="创建一个新的数据配置">新建</button>
+                <button id="delete-profile-btn" title="删除当前选中的配置">删除</button>
+            </div>
+            <div class="url-display">
+                <label for="vmix-url">vMix 数据源 URL (点击复制):</label>
+                <input type="text" id="vmix-url" readonly>
+            </div>
+        </section>
+
+        <!-- 数据编辑区域 -->
+        <section class="data-editor">
+            <h2 id="current-profile-title">数据字段</h2>
+            <div id="data-fields-container">
+                <!-- 动态生成的键值对输入框将在这里显示 -->
+            </div>
+            <button id="add-field-btn">添加字段</button>
+        </section>
+    </div>
+    
+    <!-- 前端逻辑脚本 -->
+    <script src="script.js"></script>
+</body>
+</html>
