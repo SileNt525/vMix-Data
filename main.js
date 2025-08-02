@@ -46,10 +46,12 @@ function createWindow() {
 
 // 启动后端服务器子进程
 function startServer() {
+    console.log('Starting backend server process');
     const serverPath = path.join(__dirname, 'server.js');
     // 【已修正】使用 fork 启动一个独立的 Node.js 进程来运行服务器
     // 并将数据目录 dataDir 作为一个参数传递给子进程
     serverProcess = fork(serverPath, [dataDir]);
+    console.log('Backend server process started with PID:', serverProcess.pid);
 
     // 监听来自服务器子进程的消息
     serverProcess.on('message', (msg) => {

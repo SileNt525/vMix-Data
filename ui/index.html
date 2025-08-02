@@ -26,15 +26,46 @@
                 <label for="vmix-url">vMix 数据源 URL (点击复制):</label>
                 <input type="text" id="vmix-url" readonly>
             </div>
+            <div class="connection-status">
+                <label>连接状态:</label>
+                <span id="connection-status" class="status-disconnected">未连接</span>
+            </div>
         </section>
 
-        <!-- 数据编辑区域 -->
-        <section class="data-editor">
-            <h2 id="current-profile-title">数据字段</h2>
-            <div id="data-fields-container">
-                <!-- 动态生成的键值对输入框将在这里显示 -->
+        <!-- 数据项管理区域 -->
+        <section class="data-manager">
+            <h2 id="current-profile-title">数据项管理</h2>
+            
+            <!-- 添加新数据项的表单 -->
+            <div class="add-item-form">
+                <h3>添加新数据项</h3>
+                <form id="add-item-form">
+                    <div class="form-group">
+                        <label for="item-name">数据名称:</label>
+                        <input type="text" id="item-name" name="itemName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="item-value">数据值:</label>
+                        <input type="text" id="item-value" name="itemValue" required>
+                    </div>
+                    <button type="submit" id="add-item-btn">添加数据项</button>
+                </form>
             </div>
-            <button id="add-field-btn">添加字段</button>
+            
+            <!-- 数据项列表展示区域 -->
+            <div class="data-list-container">
+                <h3>数据项列表</h3>
+                <div id="data-items-container">
+                    <!-- 数据项将在这里动态生成 -->
+                    <p class="placeholder">暂无数据项，请添加新数据项。</p>
+                </div>
+            </div>
+            
+            <!-- 实时预览区域 -->
+            <div class="json-preview">
+                <h3>实时预览 (JSON格式)</h3>
+                <pre id="json-preview-content"></pre>
+            </div>
         </section>
     </div>
     
