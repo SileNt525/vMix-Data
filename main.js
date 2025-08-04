@@ -1,35 +1,22 @@
 /**
- * main.js (最终修复版)
- * 职责：
- * 1. 创建和管理窗口。
- * 2. 启动和管理服务器子进程。
- * 3. 作为“中间人”，将前端的请求通过IPC转发给服务器子进程。
+ * main.js (最终调试版)
  */
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
-const { fork } = require('child_process');
-const fs = require('fs');
-const crypto = require('crypto');
+const fs = require('fs/promises');
+const express = require('express');
+const cors = require('cors');
+const compression = require('compression');
 
+// --- 基础设置 ---
 const userDataPath = app.getPath('userData');
 const dataDir = path.join(userDataPath, 'profiles');
-
-if (!fs.existsSync(dataDir)) {
-    try {
-        fs.mkdirSync(dataDir, { recursive: true });
-        console.log('Profiles directory created:', dataDir);
-    } catch (error) {
-        console.error('Failed to create profiles directory:', error);
-    }
-}
-
 let mainWindow;
-let serverProcess;
+let server;
+const serverPort = 8088; // 默认端口
 
-// 用于存储IPC请求的回调函数
-const ipcCallbacks = new Map();
-
-function createWindow() {
+// --- 主程序逻辑 ---
+function createWindow(port) {
     mainWindow = new BrowserWindow({
         width: 800,
         height: 700,
@@ -39,72 +26,131 @@ function createWindow() {
             nodeIntegration: false,
         },
     });
+
     mainWindow.loadFile('ui/index.html');
-    // mainWindow.webContents.openDevTools();
+
+    mainWindow.webContents.on('did-finish-load', () => {
+        console.log('Renderer process finished loading. Sending server-started event.');
+        mainWindow.webContents.send('server-started', port);
+    });
 }
 
-function startServer() {
-    console.log('Starting backend server process...');
-    const serverPath = path.join(__dirname, 'server.js');
-    serverProcess = fork(serverPath, [dataDir]);
-    console.log('Backend server process forked with PID:', serverProcess.pid);
+async function startServer() {
+    try {
+        await fs.mkdir(dataDir, { recursive: true });
+    } catch (error) {
+        dialog.showErrorBox('致命错误', '无法创建数据存储目录，程序即将退出。');
+        app.quit();
+        return;
+    }
 
-    serverProcess.on('message', (msg) => {
-        console.log('Message from server process:', msg);
-        if (msg.status === 'SERVER_STARTED' && mainWindow) {
-            mainWindow.webContents.send('server-started', msg.port);
-        } else if (msg.status === 'SERVER_START_FAILED') {
-            dialog.showErrorBox('服务器启动失败', msg.message || '未知错误');
-        } else if (msg.type === 'IPC_RESPONSE') {
-            const callback = ipcCallbacks.get(msg.id);
-            if (callback) {
-                callback(msg.payload);
-                ipcCallbacks.delete(msg.id);
+    const expressApp = express();
+    expressApp.use(cors());
+    expressApp.use(compression());
+    expressApp.use(express.json());
+    const API_KEY = process.env.VMIX_API_KEY || 'vmix-default-api-key';
+
+    const accessControl = (req, res, next) => {
+        const clientIP = req.ip;
+        const isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(clientIP);
+        if (!isLocal) {
+            const apiKey = req.headers['x-api-key'] || req.query.api_key;
+            if (!apiKey || apiKey !== API_KEY) {
+                return res.status(403).json({ error: 'Forbidden: Invalid API key' });
             }
         }
+        next();
+    };
+    
+    expressApp.get('/api/data/:profileName', accessControl, async (req, res) => {
+        const filePath = path.join(dataDir, `${req.params.profileName}.json`);
+        try {
+            const fileData = await fs.readFile(filePath, 'utf8');
+            res.setHeader('Content-Type', 'application/json; charset=utf-8').send(fileData);
+        } catch (error) {
+            res.setHeader('Content-Type', 'application/json; charset=utf-8').send('[{"message":"Profile not found"}]');
+        }
     });
 
-    serverProcess.on('exit', (code) => {
-        console.log(`Server process exited with code ${code}`);
-        if (code !== 0 && !serverProcess.killed) {
-            dialog.showErrorBox('服务器错误', '后端服务器已崩溃，请重启应用。');
-        }
+    server = expressApp.listen(serverPort, '0.0.0.0', () => {
+        const actualPort = server.address().port;
+        console.log(`Server started successfully on port ${actualPort}`);
+        createWindow(actualPort);
+    }).on('error', (err) => {
+        dialog.showErrorBox('服务器启动失败', `无法在端口 ${serverPort} 上启动服务。\n错误: ${err.message}`);
+        app.quit();
     });
 }
 
-// 辅助函数：向服务器进程发送请求并等待响应
-function sendRequestToServer(type, payload) {
-    return new Promise((resolve) => {
-        if (!serverProcess || serverProcess.killed) {
-            return resolve({ success: false, error: '后台服务未运行。' });
-        }
-        const id = crypto.randomUUID();
-        ipcCallbacks.set(id, resolve);
-        serverProcess.send({ type, id, payload });
-    });
-}
-
+// --- Electron 应用生命周期 ---
 app.whenReady().then(() => {
     // --- IPC 处理器 ---
-    ipcMain.handle('get-profiles', () => sendRequestToServer('GET_PROFILES'));
-    ipcMain.handle('get-profile-data', (event, profileName) => sendRequestToServer('GET_PROFILE_DATA', { profileName }));
-    ipcMain.handle('create-profile', (event, profileName) => sendRequestToServer('CREATE_PROFILE', { profileName }));
-    ipcMain.handle('delete-profile', (event, profileName) => sendRequestToServer('DELETE_PROFILE', { profileName }));
-    ipcMain.handle('add-item', (event, payload) => sendRequestToServer('ADD_ITEM', payload));
-    ipcMain.handle('update-item', (event, payload) => sendRequestToServer('UPDATE_ITEM', payload));
-    ipcMain.handle('delete-item', (event, payload) => sendRequestToServer('DELETE_ITEM', payload));
+    ipcMain.handle('get-profiles', async () => {
+        try {
+            const files = await fs.readdir(dataDir);
+            return { success: true, data: files.filter(f => f.endsWith('.json')).map(f => path.parse(f).name) };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
 
-    createWindow();
+    ipcMain.handle('get-profile-data', async (event, profileName) => {
+        const filePath = path.join(dataDir, `${profileName}.json`);
+        try {
+            const data = await fs.readFile(filePath, 'utf8');
+            const parsed = JSON.parse(data);
+            return { success: true, data: { items: Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : {} }};
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                return { success: true, data: { items: {} } };
+            }
+            return { success: false, error: 'File invalid or unreadable' };
+        }
+    });
+
+    // 【关键调试点】
+    ipcMain.handle('save-profile-data', async (event, { profileName, data }) => {
+        const filePath = path.join(dataDir, `${profileName}.json`);
+        
+        // 调试信息 1: 确认主进程收到了请求
+        dialog.showMessageBox(mainWindow, { message: `[调试1] 主进程收到保存请求: ${profileName}\n将要写入路径: ${filePath}` });
+
+        try {
+            // vMix 需要一个对象数组
+            await fs.writeFile(filePath, JSON.stringify([data], null, 2));
+            
+            // 调试信息 2: 确认文件写入成功
+            dialog.showMessageBox(mainWindow, { message: `[调试2] 文件写入成功: ${profileName}` });
+
+            if(mainWindow) mainWindow.webContents.send('data-updated', { profileName, items: data });
+            return { success: true, data: { items: data } };
+        } catch (error) {
+            // 调试信息 3: 捕获并显示写入错误
+            dialog.showErrorBox('写入文件时出错', `无法写入文件: ${filePath}\n\n错误详情: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+    
+    ipcMain.handle('delete-profile', async (event, profileName) => {
+        const filePath = path.join(dataDir, `${profileName}.json`);
+        try {
+            await fs.unlink(filePath);
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
     startServer();
 
     app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+        if (BrowserWindow.getAllWindows().length === 0) startServer();
     });
 });
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
-        if (serverProcess) serverProcess.kill();
+        if (server) server.close();
         app.quit();
     }
 });
