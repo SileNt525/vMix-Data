@@ -8,6 +8,7 @@
  * 1. [vMix JSON 格式修复] 调整了 save-profile-data 和 get-profile-data 的逻辑，以适配 vMix 所要求的对象数组格式，确保每个数据项在 vMix 中显示为独立的一行。
  * 2. [调试] 默认开启开发者工具，方便查看前端console.log的输出。
  * 3. [健壮性] 在文件操作的catch块中增加详细的错误日志打印。
+ * 4. [移除API Key] 移除了访问API需要API Key的限制。
  */
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
@@ -59,21 +60,7 @@ async function startServer() {
     expressApp.use(compression());
     expressApp.use(express.json());
 
-    const API_KEY = process.env.VMIX_API_KEY || 'vmix-default-api-key';
-
-    const accessControl = (req, res, next) => {
-        const clientIP = req.ip;
-        const isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(clientIP);
-        if (!isLocal) {
-            const apiKey = req.headers['x-api-key'] || req.query.api_key;
-            if (!apiKey || apiKey !== API_KEY) {
-                return res.status(403).json({ error: 'Forbidden: Invalid API key' });
-            }
-        }
-        next();
-    };
-    
-    expressApp.get('/api/data/:profileName', accessControl, async (req, res) => {
+    expressApp.get('/api/data/:profileName', async (req, res) => {
         const filePath = path.join(dataDir, `${req.params.profileName}.json`);
         try {
             const fileData = await fs.readFile(filePath, 'utf8');
