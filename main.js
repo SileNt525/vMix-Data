@@ -5,8 +5,9 @@
  * 2. 直接在本进程内创建和运行Express服务器。
  * 3. 通过IPC处理所有来自前端的请求，并直接操作文件。
  * 修复要点:
- * 1. [调试] 默认开启开发者工具，方便查看前端console.log的输出。
- * 2. [健壮性] 在文件操作的catch块中增加详细的错误日志打印。
+ * 1. [vMix JSON 格式修复] 调整了 save-profile-data 和 get-profile-data 的逻辑，以适配 vMix 所要求的对象数组格式，确保每个数据项在 vMix 中显示为独立的一行。
+ * 2. [调试] 默认开启开发者工具，方便查看前端console.log的输出。
+ * 3. [健壮性] 在文件操作的catch块中增加详细的错误日志打印。
  */
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
@@ -43,7 +44,7 @@ function createWindow(port) {
     });
     
     // [调试] 默认打开开发者工具
-    mainWindow.webContents.openDevTools();
+    // mainWindow.webContents.openDevTools();
 }
 
 async function startServer() {
@@ -78,7 +79,8 @@ async function startServer() {
             const fileData = await fs.readFile(filePath, 'utf8');
             res.setHeader('Content-Type', 'application/json; charset=utf-8').send(fileData);
         } catch (error) {
-            res.setHeader('Content-Type', 'application/json; charset=utf-8').send('[{"message":"Profile not found"}]');
+            // 当配置文件不存在或为空时，返回一个空数组，这对于vMix是有效格式
+            res.setHeader('Content-Type', 'application/json; charset=utf-8').send('[]');
         }
     });
 
@@ -103,6 +105,10 @@ app.whenReady().then(() => {
             return { success: true, data: files.filter(f => f.endsWith('.json')).map(f => path.parse(f).name) };
         } catch (error) {
             console.error('Error getting profiles:', error);
+            // 确保在profiles目录不存在时也能正常工作
+            if (error.code === 'ENOENT') {
+                return { success: true, data: [] };
+            }
             return { success: false, error: error.message };
         }
     });
@@ -110,11 +116,17 @@ app.whenReady().then(() => {
     ipcMain.handle('get-profile-data', async (event, profileName) => {
         const filePath = path.join(dataDir, `${profileName}.json`);
         try {
-            const data = await fs.readFile(filePath, 'utf8');
-            const parsed = JSON.parse(data);
-            return { success: true, data: { items: Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : {} }};
+            const fileContent = await fs.readFile(filePath, 'utf8');
+            const dataArray = JSON.parse(fileContent);
+            // 将vMix格式的数组转换回UI需要的对象格式
+            const itemsObject = dataArray.reduce((obj, item) => {
+                obj[item.key] = item.value;
+                return obj;
+            }, {});
+            return { success: true, data: { items: itemsObject } };
         } catch (error) {
             if (error.code === 'ENOENT') {
+                // 如果文件不存在，返回一个空对象，表示这是一个新的或空的配置
                 return { success: true, data: { items: {} } };
             }
             console.error(`Error getting profile data for ${profileName}:`, error);
@@ -125,8 +137,10 @@ app.whenReady().then(() => {
     ipcMain.handle('save-profile-data', async (event, { profileName, data }) => {
         const filePath = path.join(dataDir, `${profileName}.json`);
         try {
-            await fs.writeFile(filePath, JSON.stringify([data], null, 2));
-            return { success: true, data: { items: data } };
+            // 将UI的对象格式转换为vMix需要的数组格式
+            const dataArray = Object.entries(data).map(([key, value]) => ({ key, value }));
+            await fs.writeFile(filePath, JSON.stringify(dataArray, null, 2));
+            return { success: true, data: { items: data } }; // 返回UI需要的对象格式
         } catch (error) {
             console.error(`Error saving profile data for ${profileName}:`, error);
             return { success: false, error: error.message };

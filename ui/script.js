@@ -1,9 +1,8 @@
 /**
- * script.js (最终修复版 - 修复CSP、重复创建和删除Bug)
+ * script.js (最终用户版 - 修复删除逻辑)
  * 修复要点:
- * 1. [CSP修复] 所有元素的显隐操作都改为 classList.add/remove('hidden')，不再使用内联样式。
- * 2. [重复创建修复] 新建配置的模态框使用form的submit事件统一处理，杜绝了点击和回车导致的重复提交问题。
- * 3. [删除Bug修复] 重写了deleteCurrentProfile函数，确保在删除后能干净、正确地重置程序状态，不再尝试读取已删除的配置。
+ * 1. [核心修复] 重写了 deleteCurrentProfile 函数。现在它会先在前端移除选项，然后显式地将下拉列表重置为有效状态，最后才调用 handleProfileChange 更新UI。这保证了程序不会读取已删除的配置。
+ * 2. 保留所有之前的修复。
  */
 document.addEventListener('DOMContentLoaded', () => {
     // UI元素
@@ -26,13 +25,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // 全局状态
     let currentProfileName = null;
     let currentData = {};
+    let serverPort = null;
     
     // --- 辅助函数 ---
-    const updateVmixUrl = (port) => {
-        if (port && currentProfileName) {
-            const url = `http://127.0.0.1:${port}/api/data/${currentProfileName}`;
+    const updateVmixUrl = () => {
+        if (serverPort && currentProfileName) {
+            const url = `http://127.0.0.1:${serverPort}/api/data/${currentProfileName}`;
             vmixUrlInput.value = url;
-            vmixUrlInput.title = `远程访问: http://<本机IP>:${port}/api/data/${currentProfileName}?api_key=vmix-default-api-key`;
+            vmixUrlInput.title = `远程访问: http://<本机IP>:${serverPort}/api/data/${currentProfileName}?api_key=vmix-default-api-key`;
         } else {
             vmixUrlInput.value = '请选择或创建一个配置文件';
             vmixUrlInput.title = '';
@@ -56,12 +56,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
-    const updateUIForProfile = (profileData, port) => {
+    const updateUIForProfile = (profileData) => {
         currentData = profileData || {};
         const jsonPreviewContent = document.getElementById('json-preview-content');
         jsonPreviewContent.textContent = JSON.stringify(currentData, null, 2);
         renderDataItems();
-        updateVmixUrl(port);
+        updateVmixUrl();
     };
 
     // --- 核心逻辑 ---
@@ -69,7 +69,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const result = await window.api.getProfiles();
         if (result.success) {
             const profiles = result.data;
-            const currentSelection = selectProfileName || profileSelect.value || (profiles[0] || null);
+            let currentSelection = selectProfileName || profileSelect.value;
+            
+            // 如果当前选中的项不存在于新的列表中（比如刚被删除），则清空选择
+            if (!profiles.includes(currentSelection)) {
+                currentSelection = profiles[0] || null;
+            }
+
             profileSelect.innerHTML = '<option value="">-- 选择一个配置 --</option>';
             profiles.forEach(p => {
                 const option = document.createElement('option');
@@ -77,7 +83,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 option.textContent = p;
                 profileSelect.appendChild(option);
             });
-            profileSelect.value = profiles.includes(currentSelection) ? currentSelection : '';
+
+            profileSelect.value = currentSelection || '';
             await handleProfileChange();
         }
     };
@@ -130,13 +137,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!profileNameToDelete || !confirm(`确定要删除配置文件 "${profileNameToDelete}" 吗？此操作不可撤销。`)) return;
 
         const result = await window.api.deleteProfile(profileNameToDelete);
+        
         if (result.success) {
-            const optionToRemove = profileSelect.querySelector(`option[value="${profileNameToDelete}"]`);
-            if (optionToRemove) optionToRemove.remove();
-            
-            // 手动触发change事件，以统一UI更新逻辑
-            profileSelect.value = "";
-            profileSelect.dispatchEvent(new Event('change'));
+            await loadProfiles(); // 重新加载列表，loadProfiles内部逻辑已优化，会安全地处理选中项
         } else {
             alert(`删除失败: ${result.error}`);
         }
@@ -176,10 +179,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- 事件监听器 ---
     window.api.onServerStarted((port) => {
+        serverPort = port;
         const connectionStatusIndicator = document.getElementById('connection-status');
         connectionStatusIndicator.className = 'status-connected';
         connectionStatusIndicator.textContent = '已连接';
-        updateVmixUrl(port);
+        updateVmixUrl();
     });
 
     profileSelect.addEventListener('change', handleProfileChange);
