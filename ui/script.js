@@ -1,11 +1,10 @@
 /**
- * ui/script.js (Definitive-Fix v2)
+ * ui/script.js (Template Library Upgrade)
  *
- * Key Fixes:
- * 1.  [USE DEDICATED CREATION API]: The new profile form now calls `window.api.createProfile(name)` instead of the generic save function. It awaits the result and only proceeds on success, ensuring the file exists before the UI tries to load it.
- * 2.  [CHECK EVERY SAVE]: All functions that write data (`debouncedSaveData`, `createNewProfile`, `saveCustomTemplates`, `deleteCustomTemplate`) now properly `await` the API call and check the `result.success` flag.
- * 3.  [IMMEDIATE USER FEEDBACK]: If any save operation fails, an alert with a descriptive error is shown immediately.
- * 4.  [STATE SYNC ON SUCCESS]: The local state (e.g., `CUSTOM_TEMPLATES`) is now only updated *after* a successful save confirmation from the backend, guaranteeing UI and disk are in sync.
+ * Key Features:
+ * 1.  [PROFESSIONAL TEMPLATES]: Added a rich library of predefined templates for Basketball and Soccer, based on common broadcast graphics.
+ * 2.  [TEMPLATE CATEGORIZATION]: The template data structure and UI now support categories (folders). Both the sidebar library and the "Add Instance" modal use this grouping for a much better user experience.
+ * 3.  [UI LOGIC REFACTOR]: The `renderTemplateLibrary` and the "Add Instance" modal population logic have been rewritten to handle the new categorized structure.
  */
 document.addEventListener('DOMContentLoaded', () => {
     // === UI Elements & State ===
@@ -30,12 +29,31 @@ document.addEventListener('DOMContentLoaded', () => {
     let CUSTOM_TEMPLATES = {};
     let ALL_TEMPLATES = {};
 
+    // === NEW: Categorized, Professional Predefined Templates ===
     const PREDEFINED_TEMPLATES = {
-        "basic_scoreboard": { name: "通用比分牌", items: { "team_a_name": "主队", "team_a_score": "0", "team_b_name": "客队", "team_b_score": "0" }, predef: true },
-        "basketball_stats": { name: "篮球技术统计", items: { "fouls": "0", "timeouts": "3", "possession": ">" }, predef: true },
-        "player_stats": { name: "球员数据", items: { "points": "0", "rebounds": "0", "assists": "0" }, predef: true },
-        "simple_text": { name: "单行文本", items: { "line1": "Hello World" }, predef: true }
+        "篮球 (Basketball)": {
+            "bball_main_scoreboard": { name: "主比分牌", items: { "team_a_name": "HOS", "team_a_score": "101", "team_b_name": "GUE", "team_b_score": "99", "period": "Q4", "game_clock": "01:12", "shot_clock": "18", "team_a_fouls": "4", "team_b_fouls": "5", "team_a_timeouts": "2", "team_b_timeouts": "3" } },
+            "bball_player_stats": { name: "球员数据条", items: { "player_name": "S. CURRY", "player_number": "30", "points": "35", "rebounds": "8", "assists": "12", "fouls": "2" } },
+            "bball_team_stats": { name: "球队技术统计", items: { "team_name": "WARRIORS", "fg_pct": "48.5%", "3p_pct": "41.2%", "ft_pct": "89.1%", "turnovers": "12" } },
+            "bball_lower_third": { name: "信息条 (Lower Third)", items: { "line_1": "UPCOMING GAME", "line_2": "LAKERS vs CLIPPERS" } }
+        },
+        "足球 (Soccer)": {
+            "soccer_main_scoreboard": { name: "主比分牌", items: { "team_a_name": "FCB", "team_a_score": "2", "team_b_name": "RMA", "team_b_score": "1", "game_time": "88:24", "half": "2H", "stoppage_time": "+3" } },
+            "soccer_match_stats": { name: "赛事统计", items: { "stat_name": "控球率", "team_a_stat": "62%", "team_b_stat": "38%", "stat_name_2": "射门", "team_a_stat_2": "15", "team_b_stat_2": "9" } },
+            "soccer_player_card": { name: "球员信息卡", items: { "player_name": "L. MESSI", "player_number": "10", "goals": "1", "assists": "1" } },
+            "soccer_substitution": { name: "换人信息", items: { "player_in_name": "G. BALE", "player_in_number": "11", "player_out_name": "K. BENZEMA", "player_out_number": "9", "team_name": "RMA" } }
+        },
+        "通用 (General)": {
+            "simple_text": { name: "单行文本", items: { "line1": "Hello World" } },
+            "double_text": { name: "双行文本", items: { "line1": "Main Title", "line2": "Subtitle Text" } }
+        }
     };
+
+    // Helper to mark predefined templates
+    Object.values(PREDEFINED_TEMPLATES).forEach(category => {
+        Object.values(category).forEach(tpl => tpl.predef = true);
+    });
+
 
     // === Core Save/Render Functions ===
     const debouncedSaveData = (data) => {
@@ -48,12 +66,19 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const renderTemplateLibrary = () => {
-        ALL_TEMPLATES = { ...PREDEFINED_TEMPLATES, ...CUSTOM_TEMPLATES };
-        templateList.innerHTML = Object.entries(ALL_TEMPLATES).map(([id, tpl]) => `
-            <li data-id="${id}">
-                <span class="template-name">${tpl.name} ${tpl.predef ? '(内置)' : ''}</span>
-                ${!tpl.predef ? `<div class="template-actions"><button class="edit-template-btn" title="编辑">✏️</button><button class="delete-template-btn" title="删除">🗑️</button></div>` : ''}
-            </li>
+        ALL_TEMPLATES = { ...PREDEFINED_TEMPLATES };
+        if (Object.keys(CUSTOM_TEMPLATES).length > 0) {
+            ALL_TEMPLATES["自定义 (Custom)"] = CUSTOM_TEMPLATES;
+        }
+
+        templateList.innerHTML = Object.entries(ALL_TEMPLATES).map(([category, templates]) => `
+            <li class="category-header">${category}</li>
+            ${Object.entries(templates).map(([id, tpl]) => `
+                <li data-id="${id}" class="template-item">
+                    <span class="template-name">${tpl.name}</span>
+                    ${!tpl.predef ? `<div class="template-actions"><button class="edit-template-btn" title="编辑">✏️</button><button class="delete-template-btn" title="删除">🗑️</button></div>` : ''}
+                </li>
+            `).join('')}
         `).join('');
     };
     
@@ -86,9 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
             profileSelect.innerHTML = profiles.length ? profiles.map(p => `<option value="${p}">${p}</option>`).join('') : '<option>请新建一个配置</option>';
             profileSelect.value = selectProfileName || profiles[0] || '';
             await handleProfileChange();
-        } else {
-            alert('加载配置文件列表失败: ' + result.error);
-        }
+        } else alert('加载配置文件列表失败: ' + result.error);
     };
 
     const handleProfileChange = async () => {
@@ -114,11 +137,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // === Event Listeners ===
     window.api.onServerStarted(port => {
-        serverPort = port;
         connectionText.textContent = `已连接 (端口: ${port})`;
         document.getElementById('connection-indicator').className = 'status-connected';
     });
-
     profileSelect.addEventListener('change', handleProfileChange);
     newProfileBtn.addEventListener('click', () => newProfileModal.classList.remove('hidden'));
     deleteProfileBtn.addEventListener('click', async () => {
@@ -128,7 +149,6 @@ document.addEventListener('DOMContentLoaded', () => {
         else alert(`删除失败: ${result.error}`);
     });
 
-    // --- Template Instance & Data Card Interactions ---
     templateInstancesContainer.addEventListener('click', e => {
         const instanceDiv = e.target.closest('.template-instance');
         if (!instanceDiv) return;
@@ -171,7 +191,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Enter' && e.target.isContentEditable) { e.preventDefault(); e.target.blur(); }
     });
 
-    // --- Modal Logic with Fixes ---
     document.querySelectorAll('.modal-cancel-btn').forEach(btn => btn.addEventListener('click', () => btn.closest('.modal-overlay').classList.add('hidden')));
     
     document.getElementById('new-profile-form').addEventListener('submit', async e => {
@@ -180,19 +199,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const name = input.value.trim();
         if (!name) return alert('配置文件名不能为空。');
         if (Array.from(profileSelect.options).some(opt => opt.value === name)) return alert('该配置文件名称已存在。');
-        
-        const result = await window.api.createProfile(name); // Use dedicated creation API
+        const result = await window.api.createProfile(name);
         if (result.success) {
             input.value = '';
             newProfileModal.classList.add('hidden');
             await loadProfiles(name);
-        } else {
-            alert(`创建配置文件失败: ${result.error}`);
-        }
+        } else alert(`创建配置文件失败: ${result.error}`);
     });
     
     addTemplateInstanceBtn.addEventListener('click', () => {
-        document.getElementById('template-select').innerHTML = Object.entries(ALL_TEMPLATES).map(([id, tpl]) => `<option value="${id}">${tpl.name}</option>`).join('');
+        const select = document.getElementById('template-select');
+        select.innerHTML = Object.entries(ALL_TEMPLATES).map(([category, templates]) =>
+            `<optgroup label="${category}">
+                ${Object.entries(templates).map(([id, tpl]) => `<option value="${id}">${tpl.name}</option>`).join('')}
+            </optgroup>`
+        ).join('');
         document.getElementById('template-instance-name').value = '';
         addTemplateInstanceModal.classList.remove('hidden');
     });
@@ -202,17 +223,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const name = document.getElementById('template-instance-name').value.trim();
         if (!name) return alert('请为模板组命名。');
         if (currentProfileData.some(inst => inst.templateName === name)) return alert('该名称已被使用。');
+        
         const tplId = document.getElementById('template-select').value;
-        currentProfileData.push({ templateName: name, items: { ...ALL_TEMPLATES[tplId].items } });
+        let selectedTemplate;
+        for (const category of Object.values(ALL_TEMPLATES)) {
+            if (category[tplId]) {
+                selectedTemplate = category[tplId];
+                break;
+            }
+        }
+        
+        currentProfileData.push({ templateName: name, items: { ...selectedTemplate.items } });
         renderProfile();
         debouncedSaveData(currentProfileData);
         addTemplateInstanceModal.classList.add('hidden');
     });
 
-    // --- Template Library & Editor Logic with Fixes ---
     addNewTemplateBtn.addEventListener('click', () => openTemplateEditor());
     templateList.addEventListener('click', e => {
-        const li = e.target.closest('li[data-id]');
+        const li = e.target.closest('li.template-item');
         if (!li) return;
         const id = li.dataset.id;
         if (e.target.classList.contains('edit-template-btn')) openTemplateEditor(id);
@@ -285,7 +314,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     };
-
+    
     // --- Initial Load ---
     loadCustomTemplates().then(() => loadProfiles());
 });

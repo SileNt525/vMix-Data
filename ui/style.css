@@ -35,11 +35,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .status-connected { background-color: var(--success-color); }
 .status-disconnected { background-color: #7f8c8d; }
 
-/* NEW: Template Library */
+/* --- Template Library --- */
 .template-library { flex-grow: 1; display: flex; flex-direction: column; min-height: 0; }
 #template-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex-grow: 1; }
-#template-list li { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 4px; margin-bottom: 5px; cursor: default; }
-#template-list li:hover { background-color: var(--bg-light); }
+#template-list .category-header { font-weight: 600; color: var(--text-secondary); padding: 15px 10px 5px; font-size: 12px; text-transform: uppercase; }
+#template-list .template-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px 8px 20px; border-radius: 4px; }
+#template-list .template-item:hover { background-color: var(--bg-light); }
 #template-list .template-name { flex-grow: 1; }
 #template-list .template-actions { display: none; gap: 5px; }
 #template-list li:hover .template-actions { display: flex; }
@@ -77,8 +78,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .form-group input, .form-group select { width: 100%; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px; }
 .modal-cancel-btn { background-color: var(--bg-main); color: var(--text-primary); }
-
-/* NEW: Template Editor Modal Styles */
 #template-fields-container { max-height: 300px; overflow-y: auto; background: var(--bg-main); padding: 10px; border-radius: 6px; }
 .template-field-row { display: flex; gap: 10px; margin-bottom: 10px; }
 .template-field-row input { background-color: var(--bg-light); }
@@ -86,4 +85,3 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .template-field-row .value-input { flex: 1 1 40%; }
 .template-field-row .remove-field-btn { flex-shrink: 0; background-color: var(--danger-color); color: white; padding: 0 12px; }
 .text-btn { background: none; border: none; color: var(--primary-color); padding: 5px 0; }
-.text-btn:hover { text-decoration: underline; }
