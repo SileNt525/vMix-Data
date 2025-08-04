@@ -1,34 +1,38 @@
 /**
- * script.js (最终修复版)
+ * script.js (最终修复版 - 修复CSP、重复创建和删除Bug)
+ * 修复要点:
+ * 1. [CSP修复] 所有元素的显隐操作都改为 classList.add/remove('hidden')，不再使用内联样式。
+ * 2. [重复创建修复] 新建配置的模态框使用form的submit事件统一处理，杜绝了点击和回车导致的重复提交问题。
+ * 3. [删除Bug修复] 重写了deleteCurrentProfile函数，确保在删除后能干净、正确地重置程序状态，不再尝试读取已删除的配置。
  */
 document.addEventListener('DOMContentLoaded', () => {
+    // UI元素
     const profileSelect = document.getElementById('profile-select');
     const newProfileBtn = document.getElementById('new-profile-btn');
     const deleteProfileBtn = document.getElementById('delete-profile-btn');
     const vmixUrlInput = document.getElementById('vmix-url');
     const currentProfileTitle = document.getElementById('current-profile-title');
-    const connectionStatusIndicator = document.getElementById('connection-status');
     const addItemForm = document.getElementById('add-item-form');
     const itemNameInput = document.getElementById('item-name');
     const itemValueInput = document.getElementById('item-value');
-    const dataItemsContainer = document.getElementById('data-items-container');
-    const jsonPreviewContent = document.getElementById('json-preview-content');
+    const dataManagerSection = document.querySelector('.data-manager');
+    
+    // 模态对话框元素
+    const newProfileModal = document.getElementById('new-profile-modal');
+    const newProfileForm = document.getElementById('new-profile-form');
+    const newProfileNameInput = document.getElementById('new-profile-name-input');
+    const modalCancelBtn = document.getElementById('modal-cancel-btn');
 
+    // 全局状态
     let currentProfileName = null;
-    let serverPort = null;
     let currentData = {};
     
-    const updateConnectionStatus = (status) => {
-        connectionStatusIndicator.className = '';
-        connectionStatusIndicator.textContent = { connected: '已连接', disconnected: '未连接' }[status] || '未知';
-        connectionStatusIndicator.classList.add(`status-${status}`);
-    };
-
-    const updateVmixUrl = () => {
-        if (serverPort && currentProfileName) {
-            const url = `http://127.0.0.1:${serverPort}/api/data/${currentProfileName}`;
+    // --- 辅助函数 ---
+    const updateVmixUrl = (port) => {
+        if (port && currentProfileName) {
+            const url = `http://127.0.0.1:${port}/api/data/${currentProfileName}`;
             vmixUrlInput.value = url;
-            vmixUrlInput.title = `远程访问: http://<本机IP>:${serverPort}/api/data/${currentProfileName}?api_key=vmix-default-api-key`;
+            vmixUrlInput.title = `远程访问: http://<本机IP>:${port}/api/data/${currentProfileName}?api_key=vmix-default-api-key`;
         } else {
             vmixUrlInput.value = '请选择或创建一个配置文件';
             vmixUrlInput.title = '';
@@ -36,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     
     const renderDataItems = () => {
+        const dataItemsContainer = document.getElementById('data-items-container');
         dataItemsContainer.innerHTML = '';
         if (!currentData || Object.keys(currentData).length === 0) {
             dataItemsContainer.innerHTML = '<p class="placeholder">此配置为空，请添加新数据项。</p>';
@@ -51,27 +56,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
-    const updateJsonPreview = () => {
-        jsonPreviewContent.textContent = JSON.stringify(currentData, null, 2);
-    };
-    
-    const updateUIForProfile = (profileData) => {
+    const updateUIForProfile = (profileData, port) => {
         currentData = profileData || {};
+        const jsonPreviewContent = document.getElementById('json-preview-content');
+        jsonPreviewContent.textContent = JSON.stringify(currentData, null, 2);
         renderDataItems();
-        updateJsonPreview();
-        updateVmixUrl();
+        updateVmixUrl(port);
     };
 
-    const saveData = async () => {
-        if (!currentProfileName) return;
-        await window.api.saveProfileData(currentProfileName, currentData);
-    };
-
+    // --- 核心逻辑 ---
     const loadProfiles = async (selectProfileName = null) => {
         const result = await window.api.getProfiles();
         if (result.success) {
             const profiles = result.data;
-            const currentSelection = selectProfileName || profileSelect.value || profiles[0];
+            const currentSelection = selectProfileName || profileSelect.value || (profiles[0] || null);
             profileSelect.innerHTML = '<option value="">-- 选择一个配置 --</option>';
             profiles.forEach(p => {
                 const option = document.createElement('option');
@@ -88,9 +86,13 @@ document.addEventListener('DOMContentLoaded', () => {
         currentProfileName = profileSelect.value;
         const controlsVisible = !!currentProfileName;
         deleteProfileBtn.disabled = !controlsVisible;
-        const sectionsToToggle = [dataItemsContainer.parentElement, addItemForm, jsonPreviewContent.parentElement];
-        sectionsToToggle.forEach(el => el.style.display = controlsVisible ? 'block' : 'none');
-        
+
+        if (controlsVisible) {
+            dataManagerSection.classList.remove('hidden');
+        } else {
+            dataManagerSection.classList.add('hidden');
+        }
+
         if (!currentProfileName) {
             currentProfileTitle.textContent = '数据项管理';
             updateUIForProfile({});
@@ -101,63 +103,91 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
-    const createNewProfile = async () => {
-        const profileName = prompt('请输入新配置文件的名称:');
-        if (!profileName) return;
-
+    const performProfileCreation = async (profileName) => {
+        if (!profileName || !profileName.trim()) return;
         if (!/^[a-zA-Z0-9_-]+$/.test(profileName)) {
             return alert('配置文件名只能包含字母、数字、下划线和连字符。');
         }
-        
+        if (Array.from(profileSelect.options).some(opt => opt.value === profileName)) {
+            return alert('该配置文件名称已存在。');
+        }
+
         const result = await window.api.saveProfileData(profileName, {});
         if (result.success) {
-            await loadProfiles(profileName);
+            const option = document.createElement('option');
+            option.value = profileName;
+            option.textContent = profileName;
+            profileSelect.appendChild(option);
+            profileSelect.value = profileName;
+            await handleProfileChange();
         } else {
             alert(`创建失败: ${result.error}`);
         }
     };
 
     const deleteCurrentProfile = async () => {
-        if (!currentProfileName || !confirm(`确定要删除配置文件 "${currentProfileName}" 吗？此操作不可撤销。`)) return;
-        const result = await window.api.deleteProfile(currentProfileName);
-        if (result.success) await loadProfiles();
-        else alert(`删除失败: ${result.error}`);
+        const profileNameToDelete = currentProfileName;
+        if (!profileNameToDelete || !confirm(`确定要删除配置文件 "${profileNameToDelete}" 吗？此操作不可撤销。`)) return;
+
+        const result = await window.api.deleteProfile(profileNameToDelete);
+        if (result.success) {
+            const optionToRemove = profileSelect.querySelector(`option[value="${profileNameToDelete}"]`);
+            if (optionToRemove) optionToRemove.remove();
+            
+            // 手动触发change事件，以统一UI更新逻辑
+            profileSelect.value = "";
+            profileSelect.dispatchEvent(new Event('change'));
+        } else {
+            alert(`删除失败: ${result.error}`);
+        }
+    };
+
+    const saveDataAndUpdateUI = async (dataToSave) => {
+        if (!currentProfileName) return;
+        const result = await window.api.saveProfileData(currentProfileName, dataToSave);
+        if (result.success) {
+            updateUIForProfile(result.data.items);
+        } else {
+            alert(`保存失败: ${result.error}`);
+            await handleProfileChange();
+        }
     };
 
     const addDataItem = async (key, value) => {
         if (currentData.hasOwnProperty(key)) return alert('该数据名称已存在。');
-        currentData[key] = value;
-        await saveData();
+        const newData = { ...currentData, [key]: value };
+        await saveDataAndUpdateUI(newData);
     };
 
     const editDataItem = async (key, currentValue) => {
         const newValue = prompt(`请输入 "${key}" 的新数据值:`, currentValue);
         if (newValue !== null && newValue !== currentValue) {
-            currentData[key] = newValue;
-            await saveData();
+            const newData = { ...currentData, [key]: newValue };
+            await saveDataAndUpdateUI(newData);
         }
     };
 
     const deleteDataItem = async (key) => {
         if (!confirm(`确定要删除数据项 "${key}" 吗？`)) return;
-        delete currentData[key];
-        await saveData();
+        const newData = { ...currentData };
+        delete newData[key];
+        await saveDataAndUpdateUI(newData);
     };
 
+    // --- 事件监听器 ---
     window.api.onServerStarted((port) => {
-        serverPort = port;
-        updateConnectionStatus('connected');
-        updateVmixUrl();
-    });
-
-    window.api.onDataUpdated(({ profileName, items }) => {
-        if (profileName === currentProfileName) {
-            updateUIForProfile(items);
-        }
+        const connectionStatusIndicator = document.getElementById('connection-status');
+        connectionStatusIndicator.className = 'status-connected';
+        connectionStatusIndicator.textContent = '已连接';
+        updateVmixUrl(port);
     });
 
     profileSelect.addEventListener('change', handleProfileChange);
-    newProfileBtn.addEventListener('click', createNewProfile);
+    newProfileBtn.addEventListener('click', () => {
+        newProfileNameInput.value = '';
+        newProfileModal.classList.remove('hidden');
+        newProfileNameInput.focus();
+    });
     deleteProfileBtn.addEventListener('click', deleteCurrentProfile);
     
     addItemForm.addEventListener('submit', async (e) => {
@@ -171,5 +201,18 @@ document.addEventListener('DOMContentLoaded', () => {
         itemNameInput.focus();
     });
 
+    // 模态对话框事件
+    newProfileForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        newProfileModal.classList.add('hidden');
+        await performProfileCreation(newProfileNameInput.value);
+    });
+    
+    modalCancelBtn.addEventListener('click', () => {
+        newProfileModal.classList.add('hidden');
+    });
+
+    // 初始加载
+    dataManagerSection.classList.add('hidden');
     loadProfiles();
 });

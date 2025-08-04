@@ -4,6 +4,9 @@
  * 1. 创建和管理应用窗口。
  * 2. 直接在本进程内创建和运行Express服务器。
  * 3. 通过IPC处理所有来自前端的请求，并直接操作文件。
+ * 修复要点:
+ * 1. [调试] 默认开启开发者工具，方便查看前端console.log的输出。
+ * 2. [健壮性] 在文件操作的catch块中增加详细的错误日志打印。
  */
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
@@ -21,7 +24,6 @@ const serverPort = 8088; // 默认端口
 
 // --- 主程序逻辑 ---
 
-// 创建应用窗口
 function createWindow(port) {
     mainWindow = new BrowserWindow({
         width: 800,
@@ -35,27 +37,21 @@ function createWindow(port) {
 
     mainWindow.loadFile('ui/index.html');
 
-    // 关键：确保渲染进程完全加载后再发送端口信息
     mainWindow.webContents.on('did-finish-load', () => {
         console.log('Renderer process finished loading. Sending server-started event.');
         mainWindow.webContents.send('server-started', port);
     });
     
-    // 打开开发者工具，方便调试
-    // mainWindow.webContents.openDevTools();
+    // [调试] 默认打开开发者工具
+    mainWindow.webContents.openDevTools();
 }
 
-// 启动Express服务器
 async function startServer() {
-    // 确保数据目录存在
-    try {
-        await fs.mkdir(dataDir, { recursive: true });
-    } catch (error) {
+    await fs.mkdir(dataDir, { recursive: true }).catch(error => {
         console.error('Fatal: Could not create data directory.', error);
         dialog.showErrorBox('致命错误', '无法创建数据存储目录，程序即将退出。');
         app.quit();
-        return;
-    }
+    });
 
     const expressApp = express();
     expressApp.use(cors());
@@ -64,7 +60,6 @@ async function startServer() {
 
     const API_KEY = process.env.VMIX_API_KEY || 'vmix-default-api-key';
 
-    // 访问控制中间件
     const accessControl = (req, res, next) => {
         const clientIP = req.ip;
         const isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(clientIP);
@@ -77,23 +72,19 @@ async function startServer() {
         next();
     };
     
-    // API 端点
     expressApp.get('/api/data/:profileName', accessControl, async (req, res) => {
         const filePath = path.join(dataDir, `${req.params.profileName}.json`);
         try {
             const fileData = await fs.readFile(filePath, 'utf8');
             res.setHeader('Content-Type', 'application/json; charset=utf-8').send(fileData);
         } catch (error) {
-            // vMix需要一个有效的JSON数组，即使是空的
             res.setHeader('Content-Type', 'application/json; charset=utf-8').send('[{"message":"Profile not found"}]');
         }
     });
 
-    // 启动服务器监听
     server = expressApp.listen(serverPort, '0.0.0.0', () => {
         const actualPort = server.address().port;
         console.log(`Server started successfully on port ${actualPort}`);
-        // 服务器成功启动后，创建窗口
         createWindow(actualPort);
     }).on('error', (err) => {
         console.error('Failed to start server:', err);
@@ -111,6 +102,7 @@ app.whenReady().then(() => {
             const files = await fs.readdir(dataDir);
             return { success: true, data: files.filter(f => f.endsWith('.json')).map(f => path.parse(f).name) };
         } catch (error) {
+            console.error('Error getting profiles:', error);
             return { success: false, error: error.message };
         }
     });
@@ -122,10 +114,10 @@ app.whenReady().then(() => {
             const parsed = JSON.parse(data);
             return { success: true, data: { items: Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : {} }};
         } catch (error) {
-            // 如果文件不存在，这是正常情况，返回成功和空数据
             if (error.code === 'ENOENT') {
                 return { success: true, data: { items: {} } };
             }
+            console.error(`Error getting profile data for ${profileName}:`, error);
             return { success: false, error: 'File invalid or unreadable' };
         }
     });
@@ -133,12 +125,10 @@ app.whenReady().then(() => {
     ipcMain.handle('save-profile-data', async (event, { profileName, data }) => {
         const filePath = path.join(dataDir, `${profileName}.json`);
         try {
-            // vMix 需要一个对象数组
             await fs.writeFile(filePath, JSON.stringify([data], null, 2));
-            // 通知前端更新
-            if(mainWindow) mainWindow.webContents.send('data-updated', { profileName, items: data });
             return { success: true, data: { items: data } };
         } catch (error) {
+            console.error(`Error saving profile data for ${profileName}:`, error);
             return { success: false, error: error.message };
         }
     });
@@ -149,6 +139,7 @@ app.whenReady().then(() => {
             await fs.unlink(filePath);
             return { success: true };
         } catch (error) {
+            console.error(`Error deleting profile ${profileName}:`, error);
             return { success: false, error: error.message };
         }
     });

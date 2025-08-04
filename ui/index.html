@@ -8,6 +8,23 @@
     <title>vMix Data Manager</title>
     <link rel="stylesheet" href="style.css">
 </head>
+    <script src="script.js"></script>
+
+    <div id="new-profile-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <form id="new-profile-form">
+                <h2>创建新配置文件</h2>
+                <p>请输入新配置文件的名称。只能包含字母、数字、下划线和连字符。</p>
+                <input type="text" id="new-profile-name-input" placeholder="例如: my_profile" required>
+                <div class="modal-actions">
+                    <button type="button" id="modal-cancel-btn">取消</button>
+                    <button type="submit" id="modal-ok-btn">确定</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    </body>
+</html>
 <body>
     <div class="container">
         <header>
