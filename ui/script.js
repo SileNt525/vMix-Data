@@ -1,92 +1,127 @@
 /**
- * script.js (最终修复版 - 使用自定义编辑窗口)
- * 修复要点:
- * 1. [编辑功能重做] 彻底放弃不稳定的 `prompt`，改用自定义的HTML模态对话框 (`edit-item-modal`) 来实现编辑功能。这提供了更可靠、更友好的用户体验。
- * 2. [状态追踪] 引入了 `keyBeingEdited` 变量来追踪当前正在编辑的数据项，确保保存时能正确更新。
- * 3. [逻辑完善] 完善了整个数据操作（增、删、改）的流程，全部统一到 `saveDataAndUpdateUI` 函数，保证了数据状态的一致性。
+ * script.js (Modern UI & UX Revamp)
+ *
+ * Key Improvements:
+ * 1.  [Modern UI]: Card-based layout for data items.
+ * 2.  [Rapid Editing]: Added '+' and '-' buttons for quick increment/decrement of numeric values.
+ * 3.  [Inline Editing]: Data item names and values can be edited directly in place.
+ * 4.  [UX Enhancements]: Cleaner layout, better feedback (e.g., copy confirmation), and a more intuitive workflow.
+ * 5.  [Refactored Logic]: Code is reorganized for better readability and to support the new features.
  */
 document.addEventListener('DOMContentLoaded', () => {
-    // === UI元素 ===
+    // === UI Elements ===
     const profileSelect = document.getElementById('profile-select');
     const newProfileBtn = document.getElementById('new-profile-btn');
     const deleteProfileBtn = document.getElementById('delete-profile-btn');
     const vmixUrlInput = document.getElementById('vmix-url');
+    const copyUrlBtn = document.getElementById('copy-url-btn');
+    const connectionIndicator = document.getElementById('connection-indicator');
+    const connectionText = document.getElementById('connection-text');
     const currentProfileTitle = document.getElementById('current-profile-title');
     const addItemForm = document.getElementById('add-item-form');
     const itemNameInput = document.getElementById('item-name');
     const itemValueInput = document.getElementById('item-value');
-    const dataManagerSection = document.querySelector('.data-manager');
-    
-    // 新建配置模态框
+    const dataItemsContainer = document.getElementById('data-items-container');
+    const welcomeMessage = document.getElementById('welcome-message');
+
     const newProfileModal = document.getElementById('new-profile-modal');
     const newProfileForm = document.getElementById('new-profile-form');
     const newProfileNameInput = document.getElementById('new-profile-name-input');
     const modalCancelBtn = document.getElementById('modal-cancel-btn');
 
-    // [新增] 编辑数据项模态框
-    const editItemModal = document.getElementById('edit-item-modal');
-    const editItemForm = document.getElementById('edit-item-form');
-    const editItemNameInput = document.getElementById('edit-item-name-input');
-    const editItemValueInput = document.getElementById('edit-item-value-input');
-    const editModalCancelBtn = document.getElementById('edit-modal-cancel-btn');
-
-
-    // === 全局状态 ===
+    // === Global State ===
     let serverPort = null;
     let currentProfileName = null;
     let currentData = {};
-    let keyBeingEdited = null; // [新增] 用于追踪正在编辑的键
+    let debounceTimer = null;
 
-    // === 辅助函数 ===
+    // === Helper Functions ===
+
     const updateVmixUrl = () => {
         if (serverPort && currentProfileName) {
-            const url = `http://127.0.0.1:${serverPort}/api/data/${currentProfileName}`;
-            vmixUrlInput.value = url;
-            vmixUrlInput.title = `远程访问: http://<本机IP>:${serverPort}/api/data/${currentProfileName}?api_key=vmix-default-api-key`;
+            vmixUrlInput.value = `http://127.0.0.1:${serverPort}/api/data/${currentProfileName}`;
+            copyUrlBtn.disabled = false;
         } else {
-            vmixUrlInput.value = '请选择或创建一个配置文件';
-            vmixUrlInput.title = '';
+            vmixUrlInput.value = '';
+            vmixUrlInput.placeholder = '选择一个配置以生成URL';
+            copyUrlBtn.disabled = true;
         }
-    };
-    
-    const renderDataItems = () => {
-        const dataItemsContainer = document.getElementById('data-items-container');
-        dataItemsContainer.innerHTML = '';
-        if (!currentData || Object.keys(currentData).length === 0) {
-            dataItemsContainer.innerHTML = '<p class="placeholder">此配置为空，请添加新数据项。</p>';
-        } else {
-            for (const [key, value] of Object.entries(currentData)) {
-                const itemDiv = document.createElement('div');
-                itemDiv.className = 'data-item';
-                itemDiv.innerHTML = `<div class="data-item-info"><div class="data-item-name">${key}</div><div class="data-item-value">${value || ''}</div></div><div class="data-item-actions"><button class="edit-btn">编辑</button><button class="delete-btn">删除</button></div>`;
-                itemDiv.querySelector('.edit-btn').addEventListener('click', () => editDataItem(key));
-                itemDiv.querySelector('.delete-btn').addEventListener('click', () => deleteDataItem(key));
-                dataItemsContainer.appendChild(itemDiv);
-            }
-        }
-    };
-    
-    const updateUIForProfile = (profileData) => {
-        currentData = profileData || {};
-        const vmixFormatData = Object.entries(currentData).map(([key, value]) => ({ key, value }));
-        document.getElementById('json-preview-content').textContent = JSON.stringify(vmixFormatData, null, 2);
-        renderDataItems();
-        updateVmixUrl();
     };
 
-    // === 核心逻辑 ===
+    const renderDataItems = () => {
+        dataItemsContainer.innerHTML = '';
+        if (!currentData || Object.keys(currentData).length === 0) {
+            dataItemsContainer.appendChild(welcomeMessage);
+            welcomeMessage.classList.remove('hidden');
+        } else {
+            welcomeMessage.classList.add('hidden');
+            Object.entries(currentData).forEach(([key, value]) => {
+                const isNumeric = !isNaN(parseFloat(value)) && isFinite(value);
+                const card = document.createElement('div');
+                card.className = 'data-item-card';
+                card.dataset.key = key;
+
+                card.innerHTML = `
+                    <div class="item-header">
+                        <span class="item-name" contenteditable="true">${key}</span>
+                        <button class="delete-btn" title="删除">&times;</button>
+                    </div>
+                    <div class="item-content">
+                        ${isNumeric ? `
+                        <div class="value-controls">
+                            <button class="value-increment" title="增加 1">+</button>
+                            <button class="value-decrement" title="减少 1">-</button>
+                        </div>
+                        ` : ''}
+                        <div class="item-value" contenteditable="true">${value}</div>
+                    </div>
+                `;
+
+                dataItemsContainer.appendChild(card);
+            });
+        }
+    };
+    
+    // Debounced save function to prevent saving on every single keystroke
+    const debouncedSave = (data) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            saveData(data);
+        }, 300); // 300ms delay
+    };
+
+    const saveData = async (data) => {
+        if (!currentProfileName) return;
+        const result = await window.api.saveProfileData(currentProfileName, data);
+        if (!result.success) {
+            alert(`保存失败: ${result.error}`);
+            // Optionally reload data to revert UI changes
+            await handleProfileChange();
+        }
+    };
+    
+    // === Core Logic ===
+
     const loadProfiles = async (selectProfileName = null) => {
         const result = await window.api.getProfiles();
         if (result.success) {
             const profiles = result.data;
-            const currentSelection = selectProfileName || profileSelect.value || (profiles[0] || null);
-            profileSelect.innerHTML = '<option value="">-- 选择一个配置 --</option>';
-            profiles.forEach(p => {
+            const currentSelection = selectProfileName || profileSelect.value || (profiles.length > 0 ? profiles[0] : null);
+            
+            profileSelect.innerHTML = '';
+            if (profiles.length === 0) {
                 const option = document.createElement('option');
-                option.value = p;
-                option.textContent = p;
+                option.textContent = '请新建一个配置';
                 profileSelect.appendChild(option);
-            });
+            } else {
+                 profiles.forEach(p => {
+                    const option = document.createElement('option');
+                    option.value = p;
+                    option.textContent = p;
+                    profileSelect.appendChild(option);
+                });
+            }
+           
             profileSelect.value = profiles.includes(currentSelection) ? currentSelection : '';
             await handleProfileChange();
         }
@@ -94,54 +129,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const handleProfileChange = async () => {
         currentProfileName = profileSelect.value;
-        const controlsVisible = !!currentProfileName;
-        deleteProfileBtn.disabled = !controlsVisible;
-        dataManagerSection.classList.toggle('hidden', !controlsVisible);
-
-        if (!currentProfileName) {
-            currentProfileTitle.textContent = '数据项管理';
-            updateUIForProfile({});
+        const hasProfile = !!currentProfileName && currentProfileName !== '请新建一个配置';
+        
+        deleteProfileBtn.disabled = !hasProfile;
+        addItemForm.classList.toggle('hidden', !hasProfile);
+        
+        if (!hasProfile) {
+            currentProfileTitle.textContent = '请选择或新建一个配置文件';
+            currentData = {};
+            renderDataItems();
         } else {
-            currentProfileTitle.textContent = `编辑: ${currentProfileName}`;
+            currentProfileTitle.textContent = `当前配置: ${currentProfileName}`;
             const result = await window.api.getProfileData(currentProfileName);
-            updateUIForProfile(result.success ? result.data.items : {});
+            currentData = result.success ? result.data.items : {};
+            renderDataItems();
         }
-    };
-    
-    const saveDataAndUpdateUI = async () => {
-        if (!currentProfileName) return;
-        const result = await window.api.saveProfileData(currentProfileName, currentData);
-        if (result.success) {
-            updateUIForProfile(currentData);
-        } else {
-            alert(`保存失败: ${result.error}`);
-            await handleProfileChange();
-        }
+        updateVmixUrl();
     };
 
-    const addDataItem = async (key, value) => {
-        if (currentData.hasOwnProperty(key)) return alert('该数据名称已存在。');
-        currentData[key] = value;
-        await saveDataAndUpdateUI();
-    };
+    // === Event Listeners ===
 
-    // [重做] 编辑功能，不再使用 prompt
-    const editDataItem = (key) => {
-        keyBeingEdited = key;
-        editItemNameInput.value = key;
-        editItemValueInput.value = currentData[key];
-        editItemModal.classList.remove('hidden');
-        editItemValueInput.focus();
-        editItemValueInput.select();
-    };
+    // Server connection
+    window.api.onServerStarted((port) => {
+        serverPort = port;
+        connectionIndicator.className = 'status-connected';
+        connectionText.textContent = `已连接 (端口: ${port})`;
+        updateVmixUrl();
+    });
 
-    const deleteDataItem = async (key) => {
-        if (!confirm(`确定要删除数据项 "${key}" 吗？`)) return;
-        delete currentData[key];
-        await saveDataAndUpdateUI();
-    };
+    // Profile management
+    profileSelect.addEventListener('change', handleProfileChange);
+    newProfileBtn.addEventListener('click', () => {
+        newProfileNameInput.value = '';
+        newProfileModal.classList.remove('hidden');
+        newProfileNameInput.focus();
+    });
 
-    const deleteCurrentProfile = async () => {
+    deleteProfileBtn.addEventListener('click', async () => {
         if (!currentProfileName || !confirm(`确定要删除配置文件 "${currentProfileName}" 吗？此操作不可撤销。`)) return;
         const result = await window.api.deleteProfile(currentProfileName);
         if (result.success) {
@@ -149,44 +173,133 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             alert(`删除失败: ${result.error}`);
         }
-    };
-
-    // === 事件监听器 ===
-    window.api.onServerStarted((port) => {
-        serverPort = port;
-        const indicator = document.getElementById('connection-status');
-        indicator.className = 'status-connected';
-        indicator.textContent = '已连接';
-        updateVmixUrl();
     });
 
-    profileSelect.addEventListener('change', handleProfileChange);
-    newProfileBtn.addEventListener('click', () => {
-        newProfileNameInput.value = '';
-        newProfileModal.classList.remove('hidden');
-        newProfileNameInput.focus();
-    });
-    deleteProfileBtn.addEventListener('click', deleteCurrentProfile);
-    
+    // Add new data item
     addItemForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const key = itemNameInput.value.trim();
-        const value = itemValueInput.value;
-        if (!key) return alert('数据名称不能为空。');
-        await addDataItem(key, value);
+        const value = itemValueInput.value.trim();
+        if (!key) {
+            alert('数据名称不能为空。');
+            return;
+        }
+        if (currentData.hasOwnProperty(key)) {
+            alert('该数据名称已存在。');
+            return;
+        }
+
+        currentData[key] = value;
+        renderDataItems(); // Re-render immediately for better UX
+        await saveData(currentData);
+
         itemNameInput.value = '';
         itemValueInput.value = '';
         itemNameInput.focus();
     });
 
-    // 新建配置模态框事件
+    // Data item interactions (using event delegation)
+    dataItemsContainer.addEventListener('click', async (e) => {
+        const card = e.target.closest('.data-item-card');
+        if (!card) return;
+        const key = card.dataset.key;
+
+        // Delete button
+        if (e.target.classList.contains('delete-btn')) {
+            if (confirm(`确定要删除数据项 "${key}" 吗？`)) {
+                delete currentData[key];
+                renderDataItems();
+                await saveData(currentData);
+            }
+        }
+
+        // Increment button
+        if (e.target.classList.contains('value-increment')) {
+            let value = parseFloat(currentData[key]);
+            if (!isNaN(value)) {
+                currentData[key] = value + 1;
+                card.querySelector('.item-value').textContent = currentData[key];
+                debouncedSave(currentData);
+            }
+        }
+        
+        // Decrement button
+        if (e.target.classList.contains('value-decrement')) {
+            let value = parseFloat(currentData[key]);
+            if (!isNaN(value)) {
+                currentData[key] = value - 1;
+                card.querySelector('.item-value').textContent = currentData[key];
+                debouncedSave(currentData);
+            }
+        }
+    });
+
+    dataItemsContainer.addEventListener('blur', async (e) => {
+        const card = e.target.closest('.data-item-card');
+        if (!card) return;
+
+        const originalKey = card.dataset.key;
+        const newKey = card.querySelector('.item-name').textContent.trim();
+        const newValue = card.querySelector('.item-value').textContent.trim();
+        
+        let dataChanged = false;
+        
+        // Key change
+        if (originalKey !== newKey) {
+            if (!newKey) { // Prevent empty key
+                card.querySelector('.item-name').textContent = originalKey;
+                alert("数据名称不能为空。");
+                return;
+            }
+            if (currentData.hasOwnProperty(newKey)) { // Prevent duplicate key
+                 card.querySelector('.item-name').textContent = originalKey;
+                 alert("该数据名称已存在。");
+                 return;
+            }
+            // Create a new object with the new key order
+            const newData = {};
+            for (const k in currentData) {
+                if (k === originalKey) {
+                    newData[newKey] = currentData[originalKey];
+                } else {
+                    newData[k] = currentData[k];
+                }
+            }
+            currentData = newData;
+            card.dataset.key = newKey; // Update dataset
+            dataChanged = true;
+        }
+
+        // Value change
+        if (currentData[newKey] != newValue) {
+            currentData[newKey] = newValue;
+            dataChanged = true;
+        }
+        
+        if (dataChanged) {
+            // Re-render to apply numeric controls if needed
+            renderDataItems(); 
+            await saveData(currentData);
+        }
+
+    }, true); // Use capture phase to ensure blur event is caught reliably
+
+    dataItemsContainer.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.target.classList.contains('item-name') || e.target.classList.contains('item-value'))) {
+            e.preventDefault();
+            e.target.blur(); // Trigger the blur event to save
+        }
+    });
+
+
+    // Modal logic
     newProfileForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const profileName = newProfileNameInput.value.trim();
-        if (!profileName) return;
-        if (!/^[a-zA-Z0-9_-]+$/.test(profileName)) return alert('配置文件名只能包含字母、数字、下划线和连字符。');
-        if (Array.from(profileSelect.options).some(opt => opt.value === profileName)) return alert('该配置文件名称已存在。');
-        
+        if (Array.from(profileSelect.options).some(opt => opt.value === profileName)) {
+            alert('该配置文件名称已存在。');
+            return;
+        }
         newProfileModal.classList.add('hidden');
         await window.api.saveProfileData(profileName, {});
         await loadProfiles(profileName);
@@ -194,23 +307,17 @@ document.addEventListener('DOMContentLoaded', () => {
     
     modalCancelBtn.addEventListener('click', () => newProfileModal.classList.add('hidden'));
 
-    // [新增] 编辑数据项模态框事件
-    editItemForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const newValue = editItemValueInput.value;
-        if (keyBeingEdited) {
-            currentData[keyBeingEdited] = newValue;
-            await saveDataAndUpdateUI();
-        }
-        editItemModal.classList.add('hidden');
-        keyBeingEdited = null;
+    // Copy URL
+    copyUrlBtn.addEventListener('click', () => {
+        vmixUrlInput.select();
+        document.execCommand('copy');
+        const originalText = copyUrlBtn.textContent;
+        copyUrlBtn.textContent = '已复制!';
+        setTimeout(() => {
+            copyUrlBtn.textContent = originalText;
+        }, 1500);
     });
 
-    editModalCancelBtn.addEventListener('click', () => {
-        editItemModal.classList.add('hidden');
-        keyBeingEdited = null;
-    });
-
-    // === 初始加载 ===
+    // === Initial Load ===
     loadProfiles();
 });

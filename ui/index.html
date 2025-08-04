@@ -3,92 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self';">
-    <title>vMix Data Manager</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
+    <title>vMix Data Manager Pro</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>vMix Data Manager</h1>
-        </header>
-
-        <section class="profile-manager">
-            <h2>配置文件管理</h2>
-            <div class="profile-controls">
-                <select id="profile-select" title="选择一个已有的配置或新建一个"></select>
-                <button id="new-profile-btn" title="创建一个新的数据配置">新建</button>
-                <button id="delete-profile-btn" title="删除当前选中的配置">删除</button>
-            </div>
+        <aside class="sidebar">
+            <header>
+                <svg class="logo" width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <h1>vMix Data Manager</h1>
+            </header>
+            <nav class="profile-manager">
+                <h2>配置文件</h2>
+                <div class="profile-controls">
+                    <select id="profile-select"></select>
+                    <div class="profile-buttons">
+                        <button id="new-profile-btn" title="新建配置">+</button>
+                        <button id="delete-profile-btn" title="删除当前配置">－</button>
+                    </div>
+                </div>
+            </nav>
             <div class="url-display">
-                <label for="vmix-url">vMix 数据源 URL (点击复制):</label>
-                <input type="text" id="vmix-url" readonly>
+                <label for="vmix-url">vMix 数据源 URL</label>
+                <input type="text" id="vmix-url" readonly placeholder="选择一个配置以生成URL">
+                <button id="copy-url-btn" title="点击复制">复制</button>
             </div>
             <div class="connection-status">
-                <label>连接状态:</label>
-                <span id="connection-status" class="status-disconnected">未连接</span>
+                <span id="connection-indicator" class="status-disconnected"></span>
+                <span id="connection-text">未连接</span>
             </div>
-        </section>
+        </aside>
 
-        <section class="data-manager">
-            <h2 id="current-profile-title">数据项管理</h2>
-            
-            <div class="add-item-form">
-                <h3>添加新数据项</h3>
-                <form id="add-item-form">
-                    <div class="form-group">
-                        <label for="item-name">数据名称:</label>
-                        <input type="text" id="item-name" name="itemName" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="item-value">数据值:</label>
-                        <input type="text" id="item-value" name="itemValue" required>
-                    </div>
-                    <button type="submit" id="add-item-btn">添加数据项</button>
+        <main class="main-content">
+            <header class="main-header">
+                <h2 id="current-profile-title">请选择一个配置文件</h2>
+                <form id="add-item-form" class="add-item-form">
+                    <input type="text" id="item-name" placeholder="新数据名称 (例如: score_a)" required>
+                    <input type="text" id="item-value" placeholder="初始值 (例如: 0)" required>
+                    <button type="submit" id="add-item-btn">添加</button>
                 </form>
-            </div>
-            
-            <div class="data-list-container">
-                <h3>数据项列表</h3>
-                <div id="data-items-container"></div>
-            </div>
-            
-            <div class="json-preview">
-                <h3>实时预览 (JSON格式)</h3>
-                <pre id="json-preview-content"></pre>
-            </div>
-        </section>
+            </header>
+
+            <section id="data-items-container" class="data-items-grid">
+                <div id="welcome-message" class="welcome-message">
+                    <h3>欢迎使用 vMix Data Manager</h3>
+                    <p>请从左侧选择一个配置文件，或创建一个新的配置文件来开始管理您的数据。</p>
+                </div>
+            </section>
+        </main>
     </div>
-    
+
     <div id="new-profile-modal" class="modal-overlay hidden">
         <div class="modal-content">
             <form id="new-profile-form">
                 <h2>创建新配置文件</h2>
                 <p>请输入新配置文件的名称。只能包含字母、数字、下划线和连字符。</p>
-                <input type="text" id="new-profile-name-input" placeholder="例如: my_profile" required>
+                <input type="text" id="new-profile-name-input" placeholder="例如: basketball_match" required pattern="[a-zA-Z0-9_-]+">
                 <div class="modal-actions">
                     <button type="button" id="modal-cancel-btn">取消</button>
-                    <button type="submit" id="modal-ok-btn">确定</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="edit-item-modal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <form id="edit-item-form">
-                <h2>编辑数据项</h2>
-                <div class="form-group">
-                    <label for="edit-item-name-input">数据名称 (不可修改):</label>
-                    <input type="text" id="edit-item-name-input" readonly>
-                </div>
-                <div class="form-group">
-                    <label for="edit-item-value-input">新数据值:</label>
-                    <input type="text" id="edit-item-value-input" required>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" id="edit-modal-cancel-btn">取消</button>
-                    <button type="submit">保存更改</button>
+                    <button type="submit">确定</button>
                 </div>
             </form>
         </div>
