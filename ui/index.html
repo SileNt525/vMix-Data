@@ -50,9 +50,7 @@
             
             <div class="data-list-container">
                 <h3>数据项列表</h3>
-                <div id="data-items-container">
-                    <p class="placeholder">暂无数据项，请添加新数据项。</p>
-                </div>
+                <div id="data-items-container"></div>
             </div>
             
             <div class="json-preview">
@@ -61,7 +59,7 @@
             </div>
         </section>
     </div>
-
+    
     <div id="new-profile-modal" class="modal-overlay hidden">
         <div class="modal-content">
             <form id="new-profile-form">
@@ -71,6 +69,26 @@
                 <div class="modal-actions">
                     <button type="button" id="modal-cancel-btn">取消</button>
                     <button type="submit" id="modal-ok-btn">确定</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="edit-item-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <form id="edit-item-form">
+                <h2>编辑数据项</h2>
+                <div class="form-group">
+                    <label for="edit-item-name-input">数据名称 (不可修改):</label>
+                    <input type="text" id="edit-item-name-input" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="edit-item-value-input">新数据值:</label>
+                    <input type="text" id="edit-item-value-input" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="edit-modal-cancel-btn">取消</button>
+                    <button type="submit">保存更改</button>
                 </div>
             </form>
         </div>
