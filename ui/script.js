@@ -2,7 +2,6 @@
  * script.js (最终修复版)
  */
 document.addEventListener('DOMContentLoaded', () => {
-    // --- DOM 元素获取 ---
     const profileSelect = document.getElementById('profile-select');
     const newProfileBtn = document.getElementById('new-profile-btn');
     const deleteProfileBtn = document.getElementById('delete-profile-btn');
@@ -15,18 +14,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const dataItemsContainer = document.getElementById('data-items-container');
     const jsonPreviewContent = document.getElementById('json-preview-content');
 
-    // --- 应用状态 ---
     let currentProfileName = null;
     let serverPort = null;
     let currentData = {};
     
-    // --- UI 更新函数 ---
     const updateConnectionStatus = (status) => {
         connectionStatusIndicator.className = '';
-        connectionStatusIndicator.textContent = {
-            connected: '已连接',
-            disconnected: '未连接'
-        }[status] || '未知';
+        connectionStatusIndicator.textContent = { connected: '已连接', disconnected: '未连接' }[status] || '未知';
         connectionStatusIndicator.classList.add(`status-${status}`);
     };
 
@@ -41,33 +35,33 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
-    const renderDataItems = (data) => {
+    const renderDataItems = () => {
         dataItemsContainer.innerHTML = '';
-        if (Object.keys(data).length === 0) {
+        if (!currentData || Object.keys(currentData).length === 0) {
             dataItemsContainer.innerHTML = '<p class="placeholder">此配置为空，请添加新数据项。</p>';
-        }
-        for (const [key, value] of Object.entries(data)) {
-            const itemDiv = document.createElement('div');
-            itemDiv.className = 'data-item';
-            itemDiv.innerHTML = `<div class="data-item-info"><div class="data-item-name">${key}</div><div class="data-item-value">${value || ''}</div></div><div class="data-item-actions"><button class="edit-btn">编辑</button><button class="delete-btn">删除</button></div>`;
-            itemDiv.querySelector('.edit-btn').addEventListener('click', () => editDataItem(key, value));
-            itemDiv.querySelector('.delete-btn').addEventListener('click', () => deleteDataItem(key));
-            dataItemsContainer.appendChild(itemDiv);
+        } else {
+            for (const [key, value] of Object.entries(currentData)) {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'data-item';
+                itemDiv.innerHTML = `<div class="data-item-info"><div class="data-item-name">${key}</div><div class="data-item-value">${value || ''}</div></div><div class="data-item-actions"><button class="edit-btn">编辑</button><button class="delete-btn">删除</button></div>`;
+                itemDiv.querySelector('.edit-btn').addEventListener('click', () => editDataItem(key, value));
+                itemDiv.querySelector('.delete-btn').addEventListener('click', () => deleteDataItem(key));
+                dataItemsContainer.appendChild(itemDiv);
+            }
         }
     };
     
-    const updateJsonPreview = (data) => {
-        jsonPreviewContent.textContent = JSON.stringify(data, null, 2);
+    const updateJsonPreview = () => {
+        jsonPreviewContent.textContent = JSON.stringify(currentData, null, 2);
     };
     
     const updateUIForProfile = (profileData) => {
-        currentData = profileData;
-        renderDataItems(currentData);
-        updateJsonPreview(currentData);
+        currentData = profileData || {};
+        renderDataItems();
+        updateJsonPreview();
         updateVmixUrl();
     };
 
-    // --- 数据逻辑函数 ---
     const saveData = async () => {
         if (!currentProfileName) return;
         await window.api.saveProfileData(currentProfileName, currentData);
@@ -78,7 +72,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (result.success) {
             const profiles = result.data;
             const currentSelection = selectProfileName || profileSelect.value || profiles[0];
-            
             profileSelect.innerHTML = '<option value="">-- 选择一个配置 --</option>';
             profiles.forEach(p => {
                 const option = document.createElement('option');
@@ -86,7 +79,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 option.textContent = p;
                 profileSelect.appendChild(option);
             });
-            
             profileSelect.value = profiles.includes(currentSelection) ? currentSelection : '';
             await handleProfileChange();
         }
@@ -96,9 +88,8 @@ document.addEventListener('DOMContentLoaded', () => {
         currentProfileName = profileSelect.value;
         const controlsVisible = !!currentProfileName;
         deleteProfileBtn.disabled = !controlsVisible;
-        dataItemsContainer.parentElement.style.display = controlsVisible ? 'block' : 'none';
-        addItemForm.style.display = controlsVisible ? 'block' : 'none';
-        jsonPreviewContent.parentElement.style.display = controlsVisible ? 'block' : 'none';
+        const sectionsToToggle = [dataItemsContainer.parentElement, addItemForm, jsonPreviewContent.parentElement];
+        sectionsToToggle.forEach(el => el.style.display = controlsVisible ? 'block' : 'none');
         
         if (!currentProfileName) {
             currentProfileTitle.textContent = '数据项管理';
@@ -129,11 +120,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteCurrentProfile = async () => {
         if (!currentProfileName || !confirm(`确定要删除配置文件 "${currentProfileName}" 吗？此操作不可撤销。`)) return;
         const result = await window.api.deleteProfile(currentProfileName);
-        if (result.success) {
-            await loadProfiles();
-        } else {
-            alert(`删除失败: ${result.error}`);
-        }
+        if (result.success) await loadProfiles();
+        else alert(`删除失败: ${result.error}`);
     };
 
     const addDataItem = async (key, value) => {
@@ -156,9 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
         await saveData();
     };
 
-    // --- 事件监听器 ---
     window.api.onServerStarted((port) => {
-        console.log(`UI received server-started on port: ${port}`);
         serverPort = port;
         updateConnectionStatus('connected');
         updateVmixUrl();
@@ -166,7 +152,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.api.onDataUpdated(({ profileName, items }) => {
         if (profileName === currentProfileName) {
-            console.log(`UI received data-updated for ${profileName}`);
             updateUIForProfile(items);
         }
     });
@@ -180,13 +165,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const key = itemNameInput.value.trim();
         const value = itemValueInput.value;
         if (!key) return alert('数据名称不能为空。');
-        
         await addDataItem(key, value);
         itemNameInput.value = '';
         itemValueInput.value = '';
         itemNameInput.focus();
     });
 
-    // --- 初始化 ---
     loadProfiles();
 });
