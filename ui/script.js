@@ -57,7 +57,9 @@ document.addEventListener('DOMContentLoaded', () => {
      * 连接到 WebSocket 服务器
      */
     const connectWebSocket = () => {
+        console.log('Attempting to connect to WebSocket server');
         if (websocket && websocket.readyState === WebSocket.OPEN) {
+            console.log('WebSocket connection already open, skipping connection attempt');
             return;
         }
 
@@ -67,7 +69,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            websocket = new WebSocket(`ws://127.0.0.1:${serverPort}`);
+            const wsUrl = `ws://127.0.0.1:${serverPort}`;
+            console.log(`Creating WebSocket connection to ${wsUrl}`);
+            websocket = new WebSocket(wsUrl);
             
             websocket.onopen = () => {
                 console.log('WebSocket connection established');
@@ -78,6 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             
             websocket.onmessage = (event) => {
+                console.log('Received WebSocket message:', event.data);
                 try {
                     const message = JSON.parse(event.data);
                     handleWebSocketMessage(message);
@@ -88,6 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             websocket.onclose = (event) => {
                 console.log('WebSocket connection closed', event);
+                console.log(`Close code: ${event.code}, reason: ${event.reason}`);
                 updateConnectionStatus('disconnected');
                 // 尝试重连
                 scheduleReconnect();
@@ -596,6 +602,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 监听服务器启动事件
     window.api.onServerStarted((port) => {
+        console.log(`Server started event received, port: ${port}`);
         serverPort = port;
         updateVmixUrl();
         // 尝试建立 WebSocket 连接
