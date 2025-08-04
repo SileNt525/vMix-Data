@@ -4,17 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
-    <title>vMix Data Manager Pro</title>
+    <title>vMix Data Manager - Custom Templates</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <aside class="sidebar">
             <header>
-                <svg class="logo" width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg class="logo" viewBox="0 0 24 24"><path d="M12 2L2 7L12 12L22 7L12 2Z" /><path d="M2 17L12 22L22 17" /><path d="M2 12L12 17L22 12" /></svg>
                 <h1>vMix Data Manager</h1>
             </header>
-            <nav class="profile-manager">
+            
+            <nav class="profile-manager section">
                 <h2>配置文件</h2>
                 <div class="profile-controls">
                     <select id="profile-select"></select>
@@ -24,11 +25,19 @@
                     </div>
                 </div>
             </nav>
-            <div class="url-display">
+
+            <div class="url-display section">
                 <label for="vmix-url">vMix 数据源 URL</label>
                 <input type="text" id="vmix-url" readonly placeholder="选择一个配置以生成URL">
-                <button id="copy-url-btn" title="点击复制">复制</button>
             </div>
+            
+            <div class="template-library section">
+                <h2>模板库</h2>
+                <ul id="template-list">
+                    </ul>
+                <button id="add-new-template-btn" class="sidebar-btn">创建新模板</button>
+            </div>
+
             <div class="connection-status">
                 <span id="connection-indicator" class="status-disconnected"></span>
                 <span id="connection-text">未连接</span>
@@ -38,32 +47,51 @@
         <main class="main-content">
             <header class="main-header">
                 <h2 id="current-profile-title">请选择一个配置文件</h2>
-                <form id="add-item-form" class="add-item-form">
-                    <input type="text" id="item-name" placeholder="新数据名称 (例如: score_a)" required>
-                    <input type="text" id="item-value" placeholder="初始值 (例如: 0)" required>
-                    <button type="submit" id="add-item-btn">添加</button>
-                </form>
+                <button id="add-template-instance-btn" class="hidden">+ 添加模板组</button>
             </header>
-
-            <section id="data-items-container" class="data-items-grid">
+            <section id="template-instances-container" class="template-instances-container">
                 <div id="welcome-message" class="welcome-message">
-                    <h3>欢迎使用 vMix Data Manager</h3>
-                    <p>请从左侧选择一个配置文件，或创建一个新的配置文件来开始管理您的数据。</p>
+                    <h3>欢迎使用 vMix 模板数据管理器</h3>
+                    <p>👈 请从左侧选择或创建一个配置文件。</p>
+                    <p>选择配置后，点击右上角的“+ 添加模板组”来添加数据模块。</p>
                 </div>
             </section>
         </main>
     </div>
 
+    <div id="add-template-instance-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <form id="add-template-instance-form">
+                <h2>添加新的模板组</h2>
+                <div class="form-group"><label for="template-select">选择一个模板:</label><select id="template-select" required></select></div>
+                <div class="form-group"><label for="template-instance-name">为这个组命名:</label><input type="text" id="template-instance-name" placeholder="例如: 主比分牌" required></div>
+                <div class="modal-actions"><button type="button" class="modal-cancel-btn">取消</button><button type="submit">添加组</button></div>
+            </form>
+        </div>
+    </div>
+    
     <div id="new-profile-modal" class="modal-overlay hidden">
         <div class="modal-content">
             <form id="new-profile-form">
                 <h2>创建新配置文件</h2>
-                <p>请输入新配置文件的名称。只能包含字母、数字、下划线和连字符。</p>
-                <input type="text" id="new-profile-name-input" placeholder="例如: basketball_match" required pattern="[a-zA-Z0-9_-]+">
-                <div class="modal-actions">
-                    <button type="button" id="modal-cancel-btn">取消</button>
-                    <button type="submit">确定</button>
+                <input type="text" id="new-profile-name-input" placeholder="例如: basketball_game" required pattern="[a-zA-Z0-9_-]+">
+                <div class="modal-actions"><button type="button" class="modal-cancel-btn">取消</button><button type="submit">确定</button></div>
+            </form>
+        </div>
+    </div>
+
+    <div id="template-editor-modal" class="modal-overlay hidden">
+        <div class="modal-content large">
+            <form id="template-editor-form">
+                <h2 id="template-editor-title">创建新模板</h2>
+                <input type="hidden" id="template-editor-id">
+                <div class="form-group"><label for="template-editor-name">模板名称:</label><input type="text" id="template-editor-name" required></div>
+                <div class="form-group">
+                    <label>数据字段 (Key / Default Value):</label>
+                    <div id="template-fields-container"></div>
+                    <button type="button" id="add-template-field-btn" class="text-btn">+ 添加字段</button>
                 </div>
+                <div class="modal-actions"><button type="button" class="modal-cancel-btn">取消</button><button type="submit">保存模板</button></div>
             </form>
         </div>
     </div>

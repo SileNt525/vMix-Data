@@ -1,323 +1,291 @@
 /**
- * script.js (Modern UI & UX Revamp)
+ * ui/script.js (Definitive-Fix v2)
  *
- * Key Improvements:
- * 1.  [Modern UI]: Card-based layout for data items.
- * 2.  [Rapid Editing]: Added '+' and '-' buttons for quick increment/decrement of numeric values.
- * 3.  [Inline Editing]: Data item names and values can be edited directly in place.
- * 4.  [UX Enhancements]: Cleaner layout, better feedback (e.g., copy confirmation), and a more intuitive workflow.
- * 5.  [Refactored Logic]: Code is reorganized for better readability and to support the new features.
+ * Key Fixes:
+ * 1.  [USE DEDICATED CREATION API]: The new profile form now calls `window.api.createProfile(name)` instead of the generic save function. It awaits the result and only proceeds on success, ensuring the file exists before the UI tries to load it.
+ * 2.  [CHECK EVERY SAVE]: All functions that write data (`debouncedSaveData`, `createNewProfile`, `saveCustomTemplates`, `deleteCustomTemplate`) now properly `await` the API call and check the `result.success` flag.
+ * 3.  [IMMEDIATE USER FEEDBACK]: If any save operation fails, an alert with a descriptive error is shown immediately.
+ * 4.  [STATE SYNC ON SUCCESS]: The local state (e.g., `CUSTOM_TEMPLATES`) is now only updated *after* a successful save confirmation from the backend, guaranteeing UI and disk are in sync.
  */
 document.addEventListener('DOMContentLoaded', () => {
-    // === UI Elements ===
+    // === UI Elements & State ===
     const profileSelect = document.getElementById('profile-select');
     const newProfileBtn = document.getElementById('new-profile-btn');
     const deleteProfileBtn = document.getElementById('delete-profile-btn');
-    const vmixUrlInput = document.getElementById('vmix-url');
-    const copyUrlBtn = document.getElementById('copy-url-btn');
-    const connectionIndicator = document.getElementById('connection-indicator');
     const connectionText = document.getElementById('connection-text');
     const currentProfileTitle = document.getElementById('current-profile-title');
-    const addItemForm = document.getElementById('add-item-form');
-    const itemNameInput = document.getElementById('item-name');
-    const itemValueInput = document.getElementById('item-value');
-    const dataItemsContainer = document.getElementById('data-items-container');
+    const addTemplateInstanceBtn = document.getElementById('add-template-instance-btn');
+    const templateInstancesContainer = document.getElementById('template-instances-container');
     const welcomeMessage = document.getElementById('welcome-message');
-
+    const templateList = document.getElementById('template-list');
+    const addNewTemplateBtn = document.getElementById('add-new-template-btn');
     const newProfileModal = document.getElementById('new-profile-modal');
-    const newProfileForm = document.getElementById('new-profile-form');
-    const newProfileNameInput = document.getElementById('new-profile-name-input');
-    const modalCancelBtn = document.getElementById('modal-cancel-btn');
-
-    // === Global State ===
+    const addTemplateInstanceModal = document.getElementById('add-template-instance-modal');
+    const templateEditorModal = document.getElementById('template-editor-modal');
+    
     let serverPort = null;
     let currentProfileName = null;
-    let currentData = {};
+    let currentProfileData = [];
     let debounceTimer = null;
+    let CUSTOM_TEMPLATES = {};
+    let ALL_TEMPLATES = {};
 
-    // === Helper Functions ===
-
-    const updateVmixUrl = () => {
-        if (serverPort && currentProfileName) {
-            vmixUrlInput.value = `http://127.0.0.1:${serverPort}/api/data/${currentProfileName}`;
-            copyUrlBtn.disabled = false;
-        } else {
-            vmixUrlInput.value = '';
-            vmixUrlInput.placeholder = '选择一个配置以生成URL';
-            copyUrlBtn.disabled = true;
-        }
+    const PREDEFINED_TEMPLATES = {
+        "basic_scoreboard": { name: "通用比分牌", items: { "team_a_name": "主队", "team_a_score": "0", "team_b_name": "客队", "team_b_score": "0" }, predef: true },
+        "basketball_stats": { name: "篮球技术统计", items: { "fouls": "0", "timeouts": "3", "possession": ">" }, predef: true },
+        "player_stats": { name: "球员数据", items: { "points": "0", "rebounds": "0", "assists": "0" }, predef: true },
+        "simple_text": { name: "单行文本", items: { "line1": "Hello World" }, predef: true }
     };
 
-    const renderDataItems = () => {
-        dataItemsContainer.innerHTML = '';
-        if (!currentData || Object.keys(currentData).length === 0) {
-            dataItemsContainer.appendChild(welcomeMessage);
-            welcomeMessage.classList.remove('hidden');
+    // === Core Save/Render Functions ===
+    const debouncedSaveData = (data) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(async () => {
+            if (!currentProfileName) return;
+            const result = await window.api.saveProfileData(currentProfileName, data);
+            if (!result.success) alert(`自动保存失败: ${result.error}`);
+        }, 400);
+    };
+
+    const renderTemplateLibrary = () => {
+        ALL_TEMPLATES = { ...PREDEFINED_TEMPLATES, ...CUSTOM_TEMPLATES };
+        templateList.innerHTML = Object.entries(ALL_TEMPLATES).map(([id, tpl]) => `
+            <li data-id="${id}">
+                <span class="template-name">${tpl.name} ${tpl.predef ? '(内置)' : ''}</span>
+                ${!tpl.predef ? `<div class="template-actions"><button class="edit-template-btn" title="编辑">✏️</button><button class="delete-template-btn" title="删除">🗑️</button></div>` : ''}
+            </li>
+        `).join('');
+    };
+    
+    const renderProfile = () => {
+        const hasProfile = !!currentProfileName && currentProfileName !== '请新建一个配置';
+        addTemplateInstanceBtn.classList.toggle('hidden', !hasProfile);
+        templateInstancesContainer.innerHTML = '';
+        if (!hasProfile || currentProfileData.length === 0) {
+            templateInstancesContainer.appendChild(welcomeMessage);
         } else {
-            welcomeMessage.classList.add('hidden');
-            Object.entries(currentData).forEach(([key, value]) => {
-                const isNumeric = !isNaN(parseFloat(value)) && isFinite(value);
-                const card = document.createElement('div');
-                card.className = 'data-item-card';
-                card.dataset.key = key;
-
-                card.innerHTML = `
-                    <div class="item-header">
-                        <span class="item-name" contenteditable="true">${key}</span>
-                        <button class="delete-btn" title="删除">&times;</button>
-                    </div>
-                    <div class="item-content">
-                        ${isNumeric ? `
-                        <div class="value-controls">
-                            <button class="value-increment" title="增加 1">+</button>
-                            <button class="value-decrement" title="减少 1">-</button>
-                        </div>
-                        ` : ''}
-                        <div class="item-value" contenteditable="true">${value}</div>
-                    </div>
-                `;
-
-                dataItemsContainer.appendChild(card);
+            currentProfileData.forEach((instance, index) => {
+                const instanceDiv = document.createElement('div');
+                instanceDiv.className = 'template-instance';
+                instanceDiv.dataset.instanceIndex = index;
+                const cardsHTML = Object.entries(instance.items).map(([key, value]) => {
+                    const isNumeric = !isNaN(parseFloat(value)) && isFinite(value);
+                    return `<div class="data-item-card" data-key="${key}"><div class="item-name">${key}</div><div class="item-content">${isNumeric ? `<div class="value-controls"><button class="value-increment">+</button><button class="value-decrement">-</button></div>` : ''}<div class="item-value" contenteditable="true">${value}</div></div></div>`;
+                }).join('');
+                instanceDiv.innerHTML = `<div class="instance-header"><h3>${instance.templateName}</h3><button class="delete-instance-btn" title="删除模板组">&times;</button></div><div class="data-items-grid">${cardsHTML}</div>`;
+                templateInstancesContainer.appendChild(instanceDiv);
             });
         }
     };
-    
-    // Debounced save function to prevent saving on every single keystroke
-    const debouncedSave = (data) => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-            saveData(data);
-        }, 300); // 300ms delay
-    };
 
-    const saveData = async (data) => {
-        if (!currentProfileName) return;
-        const result = await window.api.saveProfileData(currentProfileName, data);
-        if (!result.success) {
-            alert(`保存失败: ${result.error}`);
-            // Optionally reload data to revert UI changes
-            await handleProfileChange();
-        }
-    };
-    
-    // === Core Logic ===
-
+    // === Initial Load & Profile Management ===
     const loadProfiles = async (selectProfileName = null) => {
         const result = await window.api.getProfiles();
         if (result.success) {
             const profiles = result.data;
-            const currentSelection = selectProfileName || profileSelect.value || (profiles.length > 0 ? profiles[0] : null);
-            
-            profileSelect.innerHTML = '';
-            if (profiles.length === 0) {
-                const option = document.createElement('option');
-                option.textContent = '请新建一个配置';
-                profileSelect.appendChild(option);
-            } else {
-                 profiles.forEach(p => {
-                    const option = document.createElement('option');
-                    option.value = p;
-                    option.textContent = p;
-                    profileSelect.appendChild(option);
-                });
-            }
-           
-            profileSelect.value = profiles.includes(currentSelection) ? currentSelection : '';
+            profileSelect.innerHTML = profiles.length ? profiles.map(p => `<option value="${p}">${p}</option>`).join('') : '<option>请新建一个配置</option>';
+            profileSelect.value = selectProfileName || profiles[0] || '';
             await handleProfileChange();
+        } else {
+            alert('加载配置文件列表失败: ' + result.error);
         }
     };
 
     const handleProfileChange = async () => {
         currentProfileName = profileSelect.value;
         const hasProfile = !!currentProfileName && currentProfileName !== '请新建一个配置';
-        
         deleteProfileBtn.disabled = !hasProfile;
-        addItemForm.classList.toggle('hidden', !hasProfile);
-        
-        if (!hasProfile) {
-            currentProfileTitle.textContent = '请选择或新建一个配置文件';
-            currentData = {};
-            renderDataItems();
-        } else {
-            currentProfileTitle.textContent = `当前配置: ${currentProfileName}`;
+        currentProfileTitle.textContent = hasProfile ? `当前配置: ${currentProfileName}` : '请选择或新建配置文件';
+        currentProfileData = [];
+        if (hasProfile) {
             const result = await window.api.getProfileData(currentProfileName);
-            currentData = result.success ? result.data.items : {};
-            renderDataItems();
+            if (result.success) currentProfileData = result.data;
+            else alert(`加载配置 "${currentProfileName}" 失败: ${result.error}`);
         }
-        updateVmixUrl();
+        renderProfile();
+    };
+
+    const loadCustomTemplates = async () => {
+        const result = await window.api.getCustomTemplates();
+        if (result.success) CUSTOM_TEMPLATES = result.data || {};
+        else alert('加载自定义模板失败: ' + result.error);
+        renderTemplateLibrary();
     };
 
     // === Event Listeners ===
-
-    // Server connection
-    window.api.onServerStarted((port) => {
+    window.api.onServerStarted(port => {
         serverPort = port;
-        connectionIndicator.className = 'status-connected';
         connectionText.textContent = `已连接 (端口: ${port})`;
-        updateVmixUrl();
+        document.getElementById('connection-indicator').className = 'status-connected';
     });
 
-    // Profile management
     profileSelect.addEventListener('change', handleProfileChange);
-    newProfileBtn.addEventListener('click', () => {
-        newProfileNameInput.value = '';
-        newProfileModal.classList.remove('hidden');
-        newProfileNameInput.focus();
-    });
-
+    newProfileBtn.addEventListener('click', () => newProfileModal.classList.remove('hidden'));
     deleteProfileBtn.addEventListener('click', async () => {
-        if (!currentProfileName || !confirm(`确定要删除配置文件 "${currentProfileName}" 吗？此操作不可撤销。`)) return;
+        if (!currentProfileName || !confirm(`确定删除配置文件 "${currentProfileName}"? 此操作不可撤销。`)) return;
         const result = await window.api.deleteProfile(currentProfileName);
-        if (result.success) {
-            await loadProfiles();
-        } else {
-            alert(`删除失败: ${result.error}`);
-        }
+        if (result.success) await loadProfiles();
+        else alert(`删除失败: ${result.error}`);
     });
 
-    // Add new data item
-    addItemForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const key = itemNameInput.value.trim();
-        const value = itemValueInput.value.trim();
-        if (!key) {
-            alert('数据名称不能为空。');
+    // --- Template Instance & Data Card Interactions ---
+    templateInstancesContainer.addEventListener('click', e => {
+        const instanceDiv = e.target.closest('.template-instance');
+        if (!instanceDiv) return;
+        const instanceIndex = parseInt(instanceDiv.dataset.instanceIndex, 10);
+        if (e.target.classList.contains('delete-instance-btn')) {
+            currentProfileData.splice(instanceIndex, 1);
+            renderProfile();
+            debouncedSaveData(currentProfileData);
             return;
         }
-        if (currentData.hasOwnProperty(key)) {
-            alert('该数据名称已存在。');
-            return;
-        }
-
-        currentData[key] = value;
-        renderDataItems(); // Re-render immediately for better UX
-        await saveData(currentData);
-
-        itemNameInput.value = '';
-        itemValueInput.value = '';
-        itemNameInput.focus();
-    });
-
-    // Data item interactions (using event delegation)
-    dataItemsContainer.addEventListener('click', async (e) => {
         const card = e.target.closest('.data-item-card');
         if (!card) return;
         const key = card.dataset.key;
-
-        // Delete button
-        if (e.target.classList.contains('delete-btn')) {
-            if (confirm(`确定要删除数据项 "${key}" 吗？`)) {
-                delete currentData[key];
-                renderDataItems();
-                await saveData(currentData);
+        const updateValue = offset => {
+            let val = parseFloat(currentProfileData[instanceIndex].items[key]) + offset;
+            if (!isNaN(val)) {
+                currentProfileData[instanceIndex].items[key] = val;
+                card.querySelector('.item-value').textContent = val;
+                debouncedSaveData(currentProfileData);
             }
-        }
-
-        // Increment button
-        if (e.target.classList.contains('value-increment')) {
-            let value = parseFloat(currentData[key]);
-            if (!isNaN(value)) {
-                currentData[key] = value + 1;
-                card.querySelector('.item-value').textContent = currentData[key];
-                debouncedSave(currentData);
-            }
-        }
-        
-        // Decrement button
-        if (e.target.classList.contains('value-decrement')) {
-            let value = parseFloat(currentData[key]);
-            if (!isNaN(value)) {
-                currentData[key] = value - 1;
-                card.querySelector('.item-value').textContent = currentData[key];
-                debouncedSave(currentData);
-            }
-        }
+        };
+        if (e.target.classList.contains('value-increment')) updateValue(1);
+        if (e.target.classList.contains('value-decrement')) updateValue(-1);
     });
-
-    dataItemsContainer.addEventListener('blur', async (e) => {
+    templateInstancesContainer.addEventListener('blur', (e) => {
+        if (!e.target.isContentEditable) return;
+        const instanceDiv = e.target.closest('.template-instance');
         const card = e.target.closest('.data-item-card');
-        if (!card) return;
-
-        const originalKey = card.dataset.key;
-        const newKey = card.querySelector('.item-name').textContent.trim();
-        const newValue = card.querySelector('.item-value').textContent.trim();
-        
-        let dataChanged = false;
-        
-        // Key change
-        if (originalKey !== newKey) {
-            if (!newKey) { // Prevent empty key
-                card.querySelector('.item-name').textContent = originalKey;
-                alert("数据名称不能为空。");
-                return;
-            }
-            if (currentData.hasOwnProperty(newKey)) { // Prevent duplicate key
-                 card.querySelector('.item-name').textContent = originalKey;
-                 alert("该数据名称已存在。");
-                 return;
-            }
-            // Create a new object with the new key order
-            const newData = {};
-            for (const k in currentData) {
-                if (k === originalKey) {
-                    newData[newKey] = currentData[originalKey];
-                } else {
-                    newData[k] = currentData[k];
-                }
-            }
-            currentData = newData;
-            card.dataset.key = newKey; // Update dataset
-            dataChanged = true;
+        if (!instanceDiv || !card) return;
+        const instanceIndex = parseInt(instanceDiv.dataset.instanceIndex, 10);
+        const key = card.dataset.key;
+        const newValue = e.target.textContent.trim();
+        if (currentProfileData[instanceIndex].items[key] != newValue) {
+            currentProfileData[instanceIndex].items[key] = newValue;
+            debouncedSaveData(currentProfileData);
+            renderProfile();
         }
-
-        // Value change
-        if (currentData[newKey] != newValue) {
-            currentData[newKey] = newValue;
-            dataChanged = true;
-        }
-        
-        if (dataChanged) {
-            // Re-render to apply numeric controls if needed
-            renderDataItems(); 
-            await saveData(currentData);
-        }
-
-    }, true); // Use capture phase to ensure blur event is caught reliably
-
-    dataItemsContainer.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && (e.target.classList.contains('item-name') || e.target.classList.contains('item-value'))) {
-            e.preventDefault();
-            e.target.blur(); // Trigger the blur event to save
-        }
+    }, true);
+    templateInstancesContainer.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && e.target.isContentEditable) { e.preventDefault(); e.target.blur(); }
     });
 
-
-    // Modal logic
-    newProfileForm.addEventListener('submit', async (e) => {
+    // --- Modal Logic with Fixes ---
+    document.querySelectorAll('.modal-cancel-btn').forEach(btn => btn.addEventListener('click', () => btn.closest('.modal-overlay').classList.add('hidden')));
+    
+    document.getElementById('new-profile-form').addEventListener('submit', async e => {
         e.preventDefault();
-        const profileName = newProfileNameInput.value.trim();
-        if (Array.from(profileSelect.options).some(opt => opt.value === profileName)) {
-            alert('该配置文件名称已存在。');
-            return;
+        const input = document.getElementById('new-profile-name-input');
+        const name = input.value.trim();
+        if (!name) return alert('配置文件名不能为空。');
+        if (Array.from(profileSelect.options).some(opt => opt.value === name)) return alert('该配置文件名称已存在。');
+        
+        const result = await window.api.createProfile(name); // Use dedicated creation API
+        if (result.success) {
+            input.value = '';
+            newProfileModal.classList.add('hidden');
+            await loadProfiles(name);
+        } else {
+            alert(`创建配置文件失败: ${result.error}`);
         }
-        newProfileModal.classList.add('hidden');
-        await window.api.saveProfileData(profileName, {});
-        await loadProfiles(profileName);
     });
     
-    modalCancelBtn.addEventListener('click', () => newProfileModal.classList.add('hidden'));
-
-    // Copy URL
-    copyUrlBtn.addEventListener('click', () => {
-        vmixUrlInput.select();
-        document.execCommand('copy');
-        const originalText = copyUrlBtn.textContent;
-        copyUrlBtn.textContent = '已复制!';
-        setTimeout(() => {
-            copyUrlBtn.textContent = originalText;
-        }, 1500);
+    addTemplateInstanceBtn.addEventListener('click', () => {
+        document.getElementById('template-select').innerHTML = Object.entries(ALL_TEMPLATES).map(([id, tpl]) => `<option value="${id}">${tpl.name}</option>`).join('');
+        document.getElementById('template-instance-name').value = '';
+        addTemplateInstanceModal.classList.remove('hidden');
     });
 
-    // === Initial Load ===
-    loadProfiles();
+    document.getElementById('add-template-instance-form').addEventListener('submit', e => {
+        e.preventDefault();
+        const name = document.getElementById('template-instance-name').value.trim();
+        if (!name) return alert('请为模板组命名。');
+        if (currentProfileData.some(inst => inst.templateName === name)) return alert('该名称已被使用。');
+        const tplId = document.getElementById('template-select').value;
+        currentProfileData.push({ templateName: name, items: { ...ALL_TEMPLATES[tplId].items } });
+        renderProfile();
+        debouncedSaveData(currentProfileData);
+        addTemplateInstanceModal.classList.add('hidden');
+    });
+
+    // --- Template Library & Editor Logic with Fixes ---
+    addNewTemplateBtn.addEventListener('click', () => openTemplateEditor());
+    templateList.addEventListener('click', e => {
+        const li = e.target.closest('li[data-id]');
+        if (!li) return;
+        const id = li.dataset.id;
+        if (e.target.classList.contains('edit-template-btn')) openTemplateEditor(id);
+        if (e.target.classList.contains('delete-template-btn')) deleteCustomTemplate(id);
+    });
+    
+    const openTemplateEditor = (id = null) => {
+        const form = document.getElementById('template-editor-form');
+        form.reset();
+        document.getElementById('template-editor-title').textContent = id ? '编辑模板' : '创建新模板';
+        document.getElementById('template-editor-id').value = id || `custom_${Date.now()}`;
+        document.getElementById('template-fields-container').innerHTML = '';
+        if (id && CUSTOM_TEMPLATES[id]) {
+            document.getElementById('template-editor-name').value = CUSTOM_TEMPLATES[id].name;
+            Object.entries(CUSTOM_TEMPLATES[id].items).forEach(([key, value]) => addTemplateFieldRow(key, value));
+        } else {
+            addTemplateFieldRow();
+        }
+        templateEditorModal.classList.remove('hidden');
+    };
+
+    const addTemplateFieldRow = (key = '', value = '') => {
+        const row = document.createElement('div');
+        row.className = 'template-field-row';
+        row.innerHTML = `<input type="text" class="key-input" placeholder="字段名 (key)" value="${key}" required><input type="text" class="value-input" placeholder="默认值" value="${value}"><button type="button" class="remove-field-btn">&times;</button>`;
+        document.getElementById('template-fields-container').appendChild(row);
+    };
+    document.getElementById('add-template-field-btn').addEventListener('click', () => addTemplateFieldRow());
+    document.getElementById('template-fields-container').addEventListener('click', e => {
+        if (e.target.classList.contains('remove-field-btn')) e.target.closest('.template-field-row').remove();
+    });
+
+    document.getElementById('template-editor-form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const id = document.getElementById('template-editor-id').value;
+        const name = document.getElementById('template-editor-name').value.trim();
+        const items = {};
+        let allKeysValid = true;
+        const keys = new Set();
+        document.querySelectorAll('#template-fields-container .template-field-row').forEach(row => {
+            const key = row.querySelector('.key-input').value.trim();
+            if (key && !keys.has(key)) {
+                items[key] = row.querySelector('.value-input').value.trim();
+                keys.add(key);
+            } else { allKeysValid = false; }
+        });
+        if (!name || !allKeysValid || Object.keys(items).length === 0) return alert('模板名称和所有字段名都必须填写，字段名不能重复，且至少需要一个字段。');
+        
+        const newTemplates = { ...CUSTOM_TEMPLATES, [id]: { name, items } };
+        const result = await window.api.saveCustomTemplates(newTemplates);
+        if (result.success) {
+            CUSTOM_TEMPLATES = newTemplates;
+            renderTemplateLibrary();
+            templateEditorModal.classList.add('hidden');
+        } else {
+            alert(`保存模板失败: ${result.error}`);
+        }
+    });
+
+    const deleteCustomTemplate = async (id) => {
+        if (confirm(`确定要删除模板 "${CUSTOM_TEMPLATES[id].name}" 吗？此操作不可撤销。`)) {
+            const tempTemplates = { ...CUSTOM_TEMPLATES };
+            delete tempTemplates[id];
+            const result = await window.api.saveCustomTemplates(tempTemplates);
+            if (result.success) {
+                CUSTOM_TEMPLATES = tempTemplates;
+                renderTemplateLibrary();
+            } else {
+                alert(`删除模板失败: ${result.error}`);
+            }
+        }
+    };
+
+    // --- Initial Load ---
+    loadCustomTemplates().then(() => loadProfiles());
 });

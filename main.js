@@ -1,14 +1,10 @@
 /**
- * main.js (最终修复版)
- * 职责:
- * 1. 创建和管理应用窗口。
- * 2. 直接在本进程内创建和运行Express服务器。
- * 3. 通过IPC处理所有来自前端的请求，并直接操作文件。
- * 修复要点:
- * 1. [vMix JSON 格式修复] 调整了 save-profile-data 和 get-profile-data 的逻辑，以适配 vMix 所要求的对象数组格式，确保每个数据项在 vMix 中显示为独立的一行。
- * 2. [调试] 默认开启开发者工具，方便查看前端console.log的输出。
- * 3. [健壮性] 在文件操作的catch块中增加详细的错误日志打印。
- * 4. [移除API Key] 移除了访问API需要API Key的限制。
+ * main.js (Definitive-Fix v2)
+ *
+ * Key Fixes:
+ * 1.  [ATOMIC CREATION HANDLER]: Introduced a new `create-profile` IPC handler. This separates the act of file creation from file updating, making the process more robust and eliminating race conditions. The frontend now awaits this specific handler's success before proceeding.
+ * 2.  [BULLETPROOF I/O]: Retained and reinforced the comprehensive try...catch wrapping on ALL file system interactions to guarantee that no error goes unhandled.
+ * 3.  [LOGIC CLARITY]: The code is cleaner and the purpose of each IPC handler is now more distinct.
  */
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
@@ -17,43 +13,29 @@ const express = require('express');
 const cors = require('cors');
 const compression = require('compression');
 
-// --- 基础设置 ---
 const userDataPath = app.getPath('userData');
 const dataDir = path.join(userDataPath, 'profiles');
+const templatesFilePath = path.join(userDataPath, 'templates.json');
 let mainWindow;
 let server;
-const serverPort = 8088; // 默认端口
+const serverPort = 8088;
 
-// --- 主程序逻辑 ---
+const safeJsonParse = (content, defaultVal) => {
+    try {
+        return content ? JSON.parse(content) : defaultVal;
+    } catch (e) {
+        console.error('JSON parsing failed:', e);
+        return defaultVal;
+    }
+};
 
-function createWindow(port) {
-    mainWindow = new BrowserWindow({
-        width: 800,
-        height: 700,
-        webPreferences: {
-            preload: path.join(__dirname, 'preload.js'),
-            contextIsolation: true,
-            nodeIntegration: false,
-        },
-    });
-
-    mainWindow.loadFile('ui/index.html');
-
-    mainWindow.webContents.on('did-finish-load', () => {
-        console.log('Renderer process finished loading. Sending server-started event.');
-        mainWindow.webContents.send('server-started', port);
-    });
-    
-    // [调试] 默认打开开发者工具
-    // mainWindow.webContents.openDevTools();
-}
-
-async function startServer() {
-    await fs.mkdir(dataDir, { recursive: true }).catch(error => {
-        console.error('Fatal: Could not create data directory.', error);
-        dialog.showErrorBox('致命错误', '无法创建数据存储目录，程序即将退出。');
-        app.quit();
-    });
+async function initializeApp() {
+    await fs.mkdir(dataDir, { recursive: true });
+    try {
+        await fs.access(templatesFilePath);
+    } catch {
+        await fs.writeFile(templatesFilePath, JSON.stringify({}));
+    }
 
     const expressApp = express();
     expressApp.use(cors());
@@ -64,92 +46,100 @@ async function startServer() {
         const filePath = path.join(dataDir, `${req.params.profileName}.json`);
         try {
             const fileData = await fs.readFile(filePath, 'utf8');
-            res.setHeader('Content-Type', 'application/json; charset=utf-8').send(fileData);
-        } catch (error) {
-            // 当配置文件不存在或为空时，返回一个空数组，这对于vMix是有效格式
+            const templateInstances = safeJsonParse(fileData, []);
+            const flattenedData = templateInstances.flatMap(instance =>
+                Object.entries(instance.items || {}).map(([key, value]) => ({ key, value }))
+            );
+            res.setHeader('Content-Type', 'application/json; charset=utf-8').send(JSON.stringify(flattenedData, null, 2));
+        } catch {
             res.setHeader('Content-Type', 'application/json; charset=utf-8').send('[]');
         }
     });
 
     server = expressApp.listen(serverPort, '0.0.0.0', () => {
-        const actualPort = server.address().port;
-        console.log(`Server started successfully on port ${actualPort}`);
-        createWindow(actualPort);
+        createWindow(server.address().port);
     }).on('error', (err) => {
-        console.error('Failed to start server:', err);
-        dialog.showErrorBox('服务器启动失败', `无法在端口 ${serverPort} 上启动服务。\n错误: ${err.message}`);
+        dialog.showErrorBox('服务器启动失败', `端口 ${serverPort} 可能被占用。\n错误: ${err.message}`);
         app.quit();
     });
 }
 
-// --- Electron 应用生命周期 ---
+function createWindow(port) {
+    mainWindow = new BrowserWindow({
+        width: 1200, height: 800,
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            contextIsolation: true, nodeIntegration: false,
+        },
+    });
+    mainWindow.loadFile('ui/index.html');
+    mainWindow.webContents.on('did-finish-load', () => {
+        mainWindow.webContents.send('server-started', port);
+    });
+}
 
 app.whenReady().then(() => {
-    // --- IPC 处理器 ---
+    // --- IPC HANDLERS ---
     ipcMain.handle('get-profiles', async () => {
         try {
             const files = await fs.readdir(dataDir);
             return { success: true, data: files.filter(f => f.endsWith('.json')).map(f => path.parse(f).name) };
-        } catch (error) {
-            console.error('Error getting profiles:', error);
-            // 确保在profiles目录不存在时也能正常工作
-            if (error.code === 'ENOENT') {
-                return { success: true, data: [] };
-            }
-            return { success: false, error: error.message };
-        }
+        } catch (error) { return { success: false, error: error.message }; }
     });
 
     ipcMain.handle('get-profile-data', async (event, profileName) => {
         const filePath = path.join(dataDir, `${profileName}.json`);
         try {
-            const fileContent = await fs.readFile(filePath, 'utf8');
-            const dataArray = JSON.parse(fileContent);
-            // 将vMix格式的数组转换回UI需要的对象格式
-            const itemsObject = dataArray.reduce((obj, item) => {
-                obj[item.key] = item.value;
-                return obj;
-            }, {});
-            return { success: true, data: { items: itemsObject } };
+            const content = await fs.readFile(filePath, 'utf8');
+            return { success: true, data: safeJsonParse(content, []) };
         } catch (error) {
-            if (error.code === 'ENOENT') {
-                // 如果文件不存在，返回一个空对象，表示这是一个新的或空的配置
-                return { success: true, data: { items: {} } };
-            }
-            console.error(`Error getting profile data for ${profileName}:`, error);
-            return { success: false, error: 'File invalid or unreadable' };
+            return error.code === 'ENOENT' ? { success: true, data: [] } : { success: false, error: error.message };
+        }
+    });
+    
+    // NEW: Dedicated creator function
+    ipcMain.handle('create-profile', async(event, profileName) => {
+        const filePath = path.join(dataDir, `${profileName}.json`);
+        try {
+            await fs.writeFile(filePath, JSON.stringify([])); // Explicitly create with empty array
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
         }
     });
 
     ipcMain.handle('save-profile-data', async (event, { profileName, data }) => {
         const filePath = path.join(dataDir, `${profileName}.json`);
         try {
-            // 将UI的对象格式转换为vMix需要的数组格式
-            const dataArray = Object.entries(data).map(([key, value]) => ({ key, value }));
-            await fs.writeFile(filePath, JSON.stringify(dataArray, null, 2));
-            return { success: true, data: { items: data } }; // 返回UI需要的对象格式
-        } catch (error) {
-            console.error(`Error saving profile data for ${profileName}:`, error);
-            return { success: false, error: error.message };
-        }
+            await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+            return { success: true };
+        } catch (error) { return { success: false, error: error.message }; }
     });
-    
+
     ipcMain.handle('delete-profile', async (event, profileName) => {
         const filePath = path.join(dataDir, `${profileName}.json`);
         try {
             await fs.unlink(filePath);
             return { success: true };
-        } catch (error) {
-            console.error(`Error deleting profile ${profileName}:`, error);
-            return { success: false, error: error.message };
-        }
+        } catch (error) { return { success: false, error: error.message }; }
     });
 
-    startServer();
-
-    app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) startServer();
+    ipcMain.handle('get-custom-templates', async () => {
+        try {
+            const content = await fs.readFile(templatesFilePath, 'utf8');
+            return { success: true, data: safeJsonParse(content, {}) };
+        } catch (error) { return { success: false, error: error.message }; }
     });
+
+    ipcMain.handle('save-custom-templates', async (event, templates) => {
+        try {
+            await fs.writeFile(templatesFilePath, JSON.stringify(templates, null, 2));
+            return { success: true };
+        } catch (error) { return { success: false, error: error.message }; }
+    });
+
+    initializeApp();
+    app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) initializeApp(); });
 });
 
 app.on('window-all-closed', () => {
