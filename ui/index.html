@@ -3,35 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- Content-Security-Policy: 限制资源加载，提升安全性 -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self';">
     <title>vMix Data Manager</title>
     <link rel="stylesheet" href="style.css">
 </head>
-    <script src="script.js"></script>
-
-    <div id="new-profile-modal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <form id="new-profile-form">
-                <h2>创建新配置文件</h2>
-                <p>请输入新配置文件的名称。只能包含字母、数字、下划线和连字符。</p>
-                <input type="text" id="new-profile-name-input" placeholder="例如: my_profile" required>
-                <div class="modal-actions">
-                    <button type="button" id="modal-cancel-btn">取消</button>
-                    <button type="submit" id="modal-ok-btn">确定</button>
-                </div>
-            </form>
-        </div>
-    </div>
-    </body>
-</html>
 <body>
     <div class="container">
         <header>
             <h1>vMix Data Manager</h1>
         </header>
 
-        <!-- 配置文件管理区域 -->
         <section class="profile-manager">
             <h2>配置文件管理</h2>
             <div class="profile-controls">
@@ -49,11 +30,9 @@
             </div>
         </section>
 
-        <!-- 数据项管理区域 -->
         <section class="data-manager">
             <h2 id="current-profile-title">数据项管理</h2>
             
-            <!-- 添加新数据项的表单 -->
             <div class="add-item-form">
                 <h3>添加新数据项</h3>
                 <form id="add-item-form">
@@ -69,24 +48,34 @@
                 </form>
             </div>
             
-            <!-- 数据项列表展示区域 -->
             <div class="data-list-container">
                 <h3>数据项列表</h3>
                 <div id="data-items-container">
-                    <!-- 数据项将在这里动态生成 -->
                     <p class="placeholder">暂无数据项，请添加新数据项。</p>
                 </div>
             </div>
             
-            <!-- 实时预览区域 -->
             <div class="json-preview">
                 <h3>实时预览 (JSON格式)</h3>
                 <pre id="json-preview-content"></pre>
             </div>
         </section>
     </div>
+
+    <div id="new-profile-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <form id="new-profile-form">
+                <h2>创建新配置文件</h2>
+                <p>请输入新配置文件的名称。只能包含字母、数字、下划线和连字符。</p>
+                <input type="text" id="new-profile-name-input" placeholder="例如: my_profile" required>
+                <div class="modal-actions">
+                    <button type="button" id="modal-cancel-btn">取消</button>
+                    <button type="submit" id="modal-ok-btn">确定</button>
+                </div>
+            </form>
+        </div>
+    </div>
     
-    <!-- 前端逻辑脚本 -->
     <script src="script.js"></script>
 </body>
 </html>
