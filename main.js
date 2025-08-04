@@ -1,15 +1,15 @@
 /**
- * main.js
- * 这是 Electron 的主进程文件。
- * 它的职责是：
- * 1. 创建和管理应用的窗口。
- * 2. 启动和管理后端的 Express 服务器子进程。
- * 3. 处理前端通过 IPC (进程间通信) 发送过来的所有请求。
+ * main.js (最终修复版)
+ * 职责：
+ * 1. 创建和管理窗口。
+ * 2. 启动和管理服务器子进程。
+ * 3. 作为“中间人”，将前端的请求通过IPC转发给服务器子进程。
  */
-const { app, BrowserWindow, ipcMain, dialog, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { fork } = require('child_process');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const userDataPath = app.getPath('userData');
 const dataDir = path.join(userDataPath, 'profiles');
@@ -17,6 +17,7 @@ const dataDir = path.join(userDataPath, 'profiles');
 if (!fs.existsSync(dataDir)) {
     try {
         fs.mkdirSync(dataDir, { recursive: true });
+        console.log('Profiles directory created:', dataDir);
     } catch (error) {
         console.error('Failed to create profiles directory:', error);
     }
@@ -24,12 +25,14 @@ if (!fs.existsSync(dataDir)) {
 
 let mainWindow;
 let serverProcess;
-let serverPort = null;
+
+// 用于存储IPC请求的回调函数
+const ipcCallbacks = new Map();
 
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 800,
-        height: 700, // 稍微增加高度以适应内容
+        height: 700,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -41,20 +44,23 @@ function createWindow() {
 }
 
 function startServer() {
-    console.log('Starting backend server process');
+    console.log('Starting backend server process...');
     const serverPath = path.join(__dirname, 'server.js');
     serverProcess = fork(serverPath, [dataDir]);
-    console.log('Backend server process started with PID:', serverProcess.pid);
+    console.log('Backend server process forked with PID:', serverProcess.pid);
 
     serverProcess.on('message', (msg) => {
-        console.log('Message from server:', msg);
+        console.log('Message from server process:', msg);
         if (msg.status === 'SERVER_STARTED' && mainWindow) {
-            serverPort = msg.port;
-            console.log(`Server started successfully on port ${serverPort}`);
-            mainWindow.webContents.send('server-started', serverPort);
-        } else if (msg.status === 'SERVER_START_FAILED' && mainWindow) {
-            let errorMessage = `服务器启动失败: ${msg.message || '未知错误'}`;
-            dialog.showErrorBox('服务器启动失败', errorMessage);
+            mainWindow.webContents.send('server-started', msg.port);
+        } else if (msg.status === 'SERVER_START_FAILED') {
+            dialog.showErrorBox('服务器启动失败', msg.message || '未知错误');
+        } else if (msg.type === 'IPC_RESPONSE') {
+            const callback = ipcCallbacks.get(msg.id);
+            if (callback) {
+                callback(msg.payload);
+                ipcCallbacks.delete(msg.id);
+            }
         }
     });
 
@@ -66,78 +72,27 @@ function startServer() {
     });
 }
 
-const performApiRequest = (method, apiPath, body = null) => {
+// 辅助函数：向服务器进程发送请求并等待响应
+function sendRequestToServer(type, payload) {
     return new Promise((resolve) => {
-        if (!serverPort) {
-            return resolve({ success: false, error: '服务器尚未就绪' });
+        if (!serverProcess || serverProcess.killed) {
+            return resolve({ success: false, error: '后台服务未运行。' });
         }
-        const url = new URL(apiPath, `http://127.0.0.1:${serverPort}`);
-        const request = net.request({ method: method, url: url.toString() });
-
-        request.on('response', (response) => {
-            let responseBody = '';
-            response.on('data', (chunk) => { responseBody += chunk.toString(); });
-            response.on('end', () => {
-                try {
-                    resolve({ success: response.statusCode < 400, data: JSON.parse(responseBody), statusCode: response.statusCode });
-                } catch (e) {
-                    resolve({ success: false, error: '无效的服务器响应' });
-                }
-            });
-        });
-        request.on('error', (error) => resolve({ success: false, error: error.message }));
-
-        if (body) {
-            const jsonBody = JSON.stringify(body);
-            request.setHeader('Content-Type', 'application/json');
-            request.write(jsonBody);
-        }
-        request.end();
+        const id = crypto.randomUUID();
+        ipcCallbacks.set(id, resolve);
+        serverProcess.send({ type, id, payload });
     });
-};
+}
 
 app.whenReady().then(() => {
-    ipcMain.handle('get-profiles', async () => {
-        const files = await fs.promises.readdir(dataDir);
-        return files.filter(file => file.endsWith('.json')).map(file => path.parse(file).name);
-    });
-
-    ipcMain.handle('get-profile-data', (event, profileName) => performApiRequest('GET', `/api/items/${profileName}`));
-    
-    // 【已修正】新增一个IPC调用来创建真实的空配置文件
-    ipcMain.handle('create-empty-profile', async (event, profileName) => {
-        if (!profileName || !/^[a-zA-Z0-9_-]+$/.test(profileName)) {
-            return { success: false, error: '无效的配置文件名。只允许字母、数字、下划线和连字符。' };
-        }
-        const filePath = path.join(dataDir, `${profileName}.json`);
-        try {
-            // 使用'wx'标志确保文件不存在时才创建，避免覆盖
-            await fs.promises.writeFile(filePath, JSON.stringify([{}], null, 2), { flag: 'wx' });
-            return { success: true };
-        } catch (error) {
-            if (error.code === 'EEXIST') {
-                return { success: false, error: '该配置文件已存在。' };
-            }
-            console.error('Failed to create empty profile file:', error);
-            return { success: false, error: '创建文件时出错，请检查后台日志。' };
-        }
-    });
-
-    ipcMain.handle('delete-profile', (event, profileName) => {
-        if (!profileName) return { success: false, error: '无效的配置文件名' };
-        // 直接删除文件，服务器会通过文件系统变化自行处理
-        const filePath = path.join(dataDir, `${profileName}.json`);
-        try {
-            fs.unlinkSync(filePath);
-            return { success: true };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
-    });
-
-    ipcMain.handle('add-item', (event, { profileName, key, value }) => performApiRequest('POST', `/api/items/${profileName}`, { key, value }));
-    ipcMain.handle('update-item', (event, { profileName, key, value }) => performApiRequest('PUT', `/api/items/${profileName}/${key}`, { value }));
-    ipcMain.handle('delete-item', (event, { profileName, key }) => performApiRequest('DELETE', `/api/items/${profileName}/${key}`));
+    // --- IPC 处理器 ---
+    ipcMain.handle('get-profiles', () => sendRequestToServer('GET_PROFILES'));
+    ipcMain.handle('get-profile-data', (event, profileName) => sendRequestToServer('GET_PROFILE_DATA', { profileName }));
+    ipcMain.handle('create-profile', (event, profileName) => sendRequestToServer('CREATE_PROFILE', { profileName }));
+    ipcMain.handle('delete-profile', (event, profileName) => sendRequestToServer('DELETE_PROFILE', { profileName }));
+    ipcMain.handle('add-item', (event, payload) => sendRequestToServer('ADD_ITEM', payload));
+    ipcMain.handle('update-item', (event, payload) => sendRequestToServer('UPDATE_ITEM', payload));
+    ipcMain.handle('delete-item', (event, payload) => sendRequestToServer('DELETE_ITEM', payload));
 
     createWindow();
     startServer();
